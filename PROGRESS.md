@@ -26,8 +26,8 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] GPIO config + global critical sections — `application/ports.c`
 - [x] Calibrated delay — `application/util.c`
 - [x] Interrupt vector mapping (doc + optional standalone table) — `application/vectors.c`
-- [ ] Supply-voltage monitor — `Supply_Init` 0xB932, `Supply_Task` 0xB9FD
-- [ ] Fault handling — `Fault_Init` 0xAA10, `Fault_Task` 0xAA36, `Fault_Report` 0xAA0C
+- [~] Supply-voltage monitor — `application/supply.c` (`Supply_Init` 0xB932, `Supply_Task` 0xB9FD; aux-channel descriptor walk referenced in asm)
+- [~] Fault handling — `application/fault.c` (`Fault_Init` 0xAA10, `Fault_Task` 0xAA36, `Fault_Report` 0xAA0C; descriptor-table read + action dispatch referenced in asm)
 - [ ] Inputs — `Inputs_Init` 0xB84D
 - [ ] Outputs — `Outputs_Init` 0xBC54, `Outputs_Task` 0xBCB1
 - [ ] Controller — `Ctrl_Init` 0xA12E, `Ctrl_Start` 0xA1E6, `Ctrl_Task` 0xA256, `Ctrl_SlowTask` 0xA694
