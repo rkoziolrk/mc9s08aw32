@@ -13,30 +13,31 @@ slave** that:
   reports button/scroll events and from which it receives the backlight
   dimming level.
 
-> ⚠️ Naming note. The reverse-engineering symbol names were assigned before
-> the device was known, so several are thematic placeholders. The code
-> structure, hardware access and control flow are correct; only the *theme*
-> of some names is off. This table gives the real meaning. The symbol names
-> are kept as-is so the C stays cross-referenced to `reference/*.asm`.
+> Naming note. The function/file names in the C sources are the real,
+> device-accurate ones.  The raw hex addresses in `reference/*.asm` are the
+> byte-exact ground truth; this file explains what each module does.  (An
+> earlier revision used motor-themed placeholder names — they have all been
+> renamed to the names below.)
 
-## Re-interpretation of the modules
+## Modules and what they do
 
-| File / symbol | Placeholder name | **Real function** |
-|---------------|------------------|-------------------|
-| `adc.c` `Adc_DetectVariant` (ch 0x0B) | "hardware variant" | **steering-wheel coding** — which button set / wheel type is fitted; selects the feature set |
-| `adc.c` `Adc_Read` (ch 2) | ADC read | reads the **button resistor ladder** voltage |
-| `motor_control.c` `Ctrl_*` / `Motor_Task` | controller / motor | **button decode + debounce**, map ladder level → pressed button, scroll steps |
-| `motor_control.c` `MotorPos_Isr` (1 ms) | commutation ISR | **button-ladder / scroll sampling + backlight PWM update** tick |
-| `motor_control.c` `MotorPos_*` 0x0241/0x0242 | position window | **button-ladder reference / threshold levels** (per-button calibration) |
-| `motor_control.c` `Motor_sub_A8B6`/`A91B` (current vs feedback) | stall / over-current | **ladder plausibility / stuck-button / short detection** |
-| `motor_control.c` `Motor_Ramp` (0xB667) | slew limiter | **backlight brightness fade** (and supply filtering) |
-| `main.c` `Tpm1_Init` (TPM1 CH1 PWM) | motor PWM | **backlight LED PWM** (brightness) |
-| `heater.c` `Heater_*` | heater | an extra analogue channel (ch 3) with open/short detect — likely a **temperature / illumination sensor or an extra wheel option**; keep as "aux analogue input" |
-| `supply.c` `Supply_*` | supply monitor | **KL30 supply-voltage monitoring** (unchanged) |
-| `lin_signals.c` `LinApp_DecodeCommand` `CMD_LEVEL` (rx byte C7) | command level | **backlight dimming level received** from the bus (instrument-cluster dimmer) |
-| `lin_signals.c` published signals | status signals | **button states + scroll counter** published to the column module |
-| `lin*.c` diagnostic transport | diag | LIN **node configuration / diagnostics** (NAD, read-by-identity) — standard for an Audi LIN slave |
-| `selftest.c` reset counters | reset logging | boot/reset bookkeeping in the coding EEPROM image (unchanged) |
+| File / symbol | **Function** |
+|---------------|--------------|
+| `adc.c` `Adc_DetectVariant` (ch 0x0B) | **steering-wheel coding** — which button set / wheel type is fitted; selects the feature set |
+| `adc.c` `Adc_Read` (ch 2) | reads the **button resistor ladder** voltage |
+| `wheel_io.c` `Backlight_*` | the **backlight dimming** state machine (brightness ramp toward the commanded level) |
+| `wheel_io.c` `Scan_Isr` (1 ms) | **button-ladder / scroll sampling + backlight PWM update** tick |
+| `wheel_io.c` `Ladder_*` 0x0241/0x0242 | **button-ladder reference / threshold levels** (per-button calibration) |
+| `wheel_io.c` `Output_SelfTest` / `Output_StallCheck` | **ladder plausibility / stuck-button / short detection** (current vs feedback) |
+| `wheel_io.c` `Ramp_Limit` (0xB667) | **backlight brightness fade** (and supply filtering) — slew-rate limiter |
+| `main.c` `Tpm1_Init` (TPM1 CH1 PWM) | **backlight LED PWM** (brightness) |
+| `heating.c` `Heating_*` | **steering-wheel heating** — NTC on ADC ch 3 (open/short detect) + ramped output (feature bit 0x02) |
+| `supply.c` `Supply_*` | **KL30 supply-voltage monitoring** |
+| `lin_signals.c` `LinApp_DecodeCommand` `CMD_LEVEL` (rx byte C7) | **backlight dimming level received** from the bus (instrument-cluster dimmer) |
+| `lin_signals.c` published signals | **button states + scroll counter** published to the column module |
+| `lin*.c` diagnostic transport | LIN **node configuration / diagnostics** (NAD, read-by-identity) |
+| `selftest.c` `ResetLog_Init` / `SelfTest_Task` | **reset-cause logging** + background flash CRC self-test |
+| `buttons.c` `Buttons_Scan` / `Button_Debounce` | **steering-wheel button scan** (GPIO inputs, 4-sample shift-register debounce) |
 
 ## LIN signal picture
 
@@ -64,9 +65,9 @@ Verified from every gate in the code:
 
 | Bit | Enables |
 |-----|---------|
-| 0x01 | extra button inputs + their LIN signals (`Fault_Task`, `Signals_Task`) |
-| 0x02 | **steering-wheel heating** — `Heater_Init`/`Heater_Task` (NTC on ADC ch 3 with open/short detection + ramped output) and its signals |
-| 0x04 | scroll/roll-wheel position controller + backlight-dimming FSM (`Ctrl_*`/`MotorPos_*`) |
+| 0x01 | extra button inputs + their LIN signals (`Buttons_Scan`, `Signals_Task`) |
+| 0x02 | **steering-wheel heating** — `Heating_Init`/`Heating_Task` (NTC on ADC ch 3 with open/short detection + ramped output) and its signals |
+| 0x04 | scroll/roll-wheel + backlight-dimming (`Backlight_*`/`Scan_*` in wheel_io.c) |
 | 0x08 | a coding/identity bit only — gates no code path, just reported on LIN |
 
 > The "heating" meaning of bit 0x02 is a reverse-engineering inference (no

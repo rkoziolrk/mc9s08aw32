@@ -6,15 +6,14 @@ Reverse-engineered C reconstruction of the firmware in
 A4 B8** — a **LIN-bus slave** that scans the wheel buttons, the scroll/roll
 wheel and drives the button backlighting, with an in-system **LIN
 bootloader** for field reprogramming. See `DEVICE.md` for the functional map
-(several reverse-engineering symbol names are thematic placeholders —
-`DEVICE.md` maps them to their real meaning).
+(what each module does, the feature-coding resistor and the variant table).
 
 > **Scope & honesty note.** This is ~18 KB of hand-written/compiled HCS08
 > machine code, about 230 routines. The modules that matter most here —
 > **LIN communication** and **ADC hardware-variant detection** — plus the
 > startup, scheduler, time base, clock, flash-config and GPIO layers are
 > reconstructed as commented C. The remaining application modules (closed-
-> loop control, motor commutation, outputs, supply monitor, fault/diag and
+> loop control, button/scroll scan, outputs, supply monitor, fault/diag and
 > the deeper LIN transport/signal tables) and the whole bootloader are
 > provided as a **complete, symbol-annotated disassembly** plus a function
 > index, because a hand reconstruction of every routine cannot be
@@ -63,7 +62,7 @@ aw32_decompiled/
   The scheduler fans out into 2/5/10/25-tick tasks.
 * **Hardware variant** is read once at init from a coding resistor on
   ADC channel `0x0B` (`Adc_DetectVariant`), which sets `g_featureFlags`
-  (motor / heater / … enables) and, out of range, `g_testMode`.
+  (scroll / heating / … enables) and, out of range, `g_testMode`.
 * **LIN** runs on SCI1. Each frame starts with a BREAK (detected as an SCI
   framing error with data 0) and a SYNC field whose length is measured by a
   TPM2-CH1 input capture to set the baud rate automatically
@@ -112,7 +111,7 @@ The register header supports both toolchains (`__SDCC` vs. CodeWarrior).
 | ADC read + variant/feature detection, strap coding | reconstructed C (`adc.c`) |
 | Flash dual-bank configuration store | reconstructed C (`nvm.c`) |
 | GPIO, critical sections, delay | reconstructed C (`ports.c`, `util.c`) |
-| Control, motor, outputs, supply, fault, diag, sensor, heater | annotated disassembly + function index |
+| Backlight, scroll, button-scan, supply, diag, sensor, heating | annotated disassembly + function index |
 | Bootloader (download protocol, RAM flash routines) | annotated disassembly + notes |
 
 Every routine — reconstructed or not — appears in

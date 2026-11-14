@@ -72,7 +72,7 @@ void Diag_SlowTask(void)
         g_diagRequest = 0;
         /* sub LB5E4: finalise the pulse (see asm 0xB5E4) */
     }
-    if (g_outputVariant == 0 && g_ctrlErrFlag == 0) {
+    if (g_outputVariant == 0 && g_funcFault == 0) {
         R8(0x000A) &= (byte)~0x01;      /* leave the test pin idle */
     }
 }

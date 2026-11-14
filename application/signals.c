@@ -29,7 +29,7 @@ void LinSignals_Init(void)
 /* ======================================================================
  * LinSignals_Refresh  [0xACB7]
  * Recomputes the publishable status signals.  Runs the fault debouncer 5
- * times (Fault_Task), then for each of the 6 input channels forces a
+ * times (Buttons_Scan), then for each of the 6 input channels forces a
  * default status (0x03) when the channel's aux byte is zero, and maps the
  * two latched flags (0x02BD/0x02BE) into their status bits.
  * ====================================================================== */
@@ -41,7 +41,7 @@ void LinSignals_Refresh(void)
     R8(0x0262) = 0;
 
     for (i = 0; i < 5; i++) {
-        Fault_Task();                          /* [0xAA36] */
+        Buttons_Scan();                          /* [0xAA36] */
     }
 
     for (i = 0; i < 6; i++) {

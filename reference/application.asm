@@ -161,13 +161,13 @@ L875F:
   8782:  cdb84d       jsr    Inputs_Init
   8785:  cd8a60       jsr    Tpm2_Init
   8788:  cd89d0       jsr    COP_Feed
-  878B:  cdbc54       jsr    Outputs_Init
+  878B:  cdbc54       jsr    ResetLog_Init
   878E:  cd8a29       jsr    Tpm1_Init
-  8791:  cda99e       jsr    Motor_Init
-  8794:  cda12e       jsr    Ctrl_Init
+  8791:  cda99e       jsr    BacklightOut_Init
+  8794:  cda12e       jsr    Backlight_Init
   8797:  cdb5a3       jsr    Diag_Init
   879A:  cdac81       jsr    LinSignals_Init
-  879D:  cdaa10       jsr    Fault_Init
+  879D:  cdaa10       jsr    Buttons_Init
   87A0:  cda0e6       jsr    Sensor_Init
   87A3:  cdb932       jsr    Supply_Init
   87A6:  c60299       lda    g_featureFlags
@@ -175,15 +175,15 @@ L875F:
   87AB:  270b         beq    L87B8
   87AD:  c602ea       lda    g_testMode
   87B0:  2606         bne    L87B8
-  87B2:  cda6f9       jsr    MotorPos_Init
-  87B5:  cda1e6       jsr    Ctrl_Start
+  87B2:  cda6f9       jsr    Scan_Init
+  87B5:  cda1e6       jsr    Backlight_Start
 L87B8:
   87B8:  c60299       lda    g_featureFlags
   87BB:  a402         and    #$02
   87BD:  2708         beq    L87C7
   87BF:  c602ea       lda    g_testMode
   87C2:  2603         bne    L87C7
-  87C4:  cdb7d9       jsr    Heater_Init
+  87C4:  cdb7d9       jsr    Heating_Init
 L87C7:
   87C7:  cd8e10       jsr    LinApp_Reset
   87CA:  cdacb7       jsr    LinSignals_Refresh
@@ -219,7 +219,7 @@ L87E6:
   87F7:  cd8b39       jsr    Nvm_RequestSave
   87FA:  5f           clrx   
   87FB:  4f           clra   
-  87FC:  cdaa0c       jsr    Fault_Report
+  87FC:  cdaa0c       jsr    Status_SetCode
   87FF:  a601         lda    #$01
   8801:  c70101       sta    g_sleepPrepared
 L8804:
@@ -329,7 +329,7 @@ L8895:
 ;---------------------------------------------------------------
   8898:  c602ea       lda    g_testMode
   889B:  2603         bne    L88A0
-  889D:  cdaa36       jsr    Fault_Task
+  889D:  cdaa36       jsr    Buttons_Scan
 L88A0:
   88A0:  81           rts    
 
@@ -344,7 +344,7 @@ L88A0:
   88AD:  2708         beq    L88B7
   88AF:  c602ea       lda    g_testMode
   88B2:  2603         bne    L88B7
-  88B4:  cda256       jsr    Ctrl_Task
+  88B4:  cda256       jsr    Backlight_Task
 L88B7:
   88B7:  c601a3       lda    g_slot10
   88BA:  4a           deca   
@@ -359,8 +359,8 @@ L88DB:
   88DB:  cd8e35       jsr    LinApp_DecodeCommand
   88DE:  206b         bra    L894B
 L88E0:
-  88E0:  cda9a9       jsr    Motor_Task
-  88E3:  cdbcb1       jsr    Outputs_Task
+  88E0:  cda9a9       jsr    BacklightOut_Task
+  88E3:  cdbcb1       jsr    SelfTest_Task
   88E6:  2063         bra    L894B
 L88E8:
   88E8:  c60299       lda    g_featureFlags
@@ -368,7 +368,7 @@ L88E8:
   88ED:  2708         beq    L88F7
   88EF:  c602ea       lda    g_testMode
   88F2:  2603         bne    L88F7
-  88F4:  cdb7e8       jsr    Heater_Task
+  88F4:  cdb7e8       jsr    Heating_Task
 L88F7:
   88F7:  cd8e35       jsr    LinApp_DecodeCommand
   88FA:  c602b0       lda    g_testRequest
@@ -386,7 +386,7 @@ L890D:
   8912:  2708         beq    L891C
   8914:  c602ea       lda    g_testMode
   8917:  2603         bne    L891C
-  8919:  cdb7e8       jsr    Heater_Task
+  8919:  cdb7e8       jsr    Heating_Task
 L891C:
   891C:  c60299       lda    g_featureFlags
   891F:  a404         and    #$04
@@ -398,10 +398,10 @@ L891C:
   892E:  2308         bls    L8938
   8930:  c602ea       lda    g_testMode
   8933:  2603         bne    L8938
-  8935:  cda5b5       jsr    MotorPos_Task
+  8935:  cda5b5       jsr    Scan_Task
 L8938:
-  8938:  cda694       jsr    Ctrl_SlowTask
-  893B:  cdbcb1       jsr    Outputs_Task
+  8938:  cda694       jsr    Backlight_SlowTask
+  893B:  cdbcb1       jsr    SelfTest_Task
   893E:  cd87dc       jsr    Sleep_Process
   8941:  cd8ec7       jsr    LinApp_CountIdle
   8944:  cdb5aa       jsr    Diag_SlowTask
@@ -548,7 +548,7 @@ L89CE:
   8A1B:  4501a0       ldhx   #$01A0
   8A1E:  7c           inc    ,x
 L8A1F:
-  8A1F:  cda719       jsr    MotorPos_Isr
+  8A1F:  cda719       jsr    Scan_Isr
   8A22:  8a           pulh   
   8A23:  86           pula   
   8A24:  b7c6         sta    g_mulDiv_tmp
@@ -1019,7 +1019,7 @@ L8D5C:
   8D75:  a4fb         and    #$FB
   8D77:  f7           sta    ,x
   8D78:  4f           clra   
-  8D79:  c70276       sta    g_ctrlErrFlag
+  8D79:  c70276       sta    g_funcFault
   8D7C:  c701b5       sta    $01B5
   8D7F:  c701b6       sta    $01B6
   8D82:  81           rts    
@@ -1147,7 +1147,7 @@ L8E0F:
   8E21:  a4fb         and    #$FB
   8E23:  f7           sta    ,x
   8E24:  4f           clra   
-  8E25:  c70276       sta    g_ctrlErrFlag
+  8E25:  c70276       sta    g_funcFault
   8E28:  5f           clrx   
   8E29:  a602         lda    #$02
   8E2B:  cd98a3       jsr    Lin_WakeOrReset
@@ -1228,7 +1228,7 @@ L8EA8:
   8EB7:  650028       cphx   #$0028
   8EBA:  260a         bne    L8EC6
   8EBC:  a601         lda    #$01
-  8EBE:  c70276       sta    g_ctrlErrFlag
+  8EBE:  c70276       sta    g_funcFault
   8EC1:  a650         lda    #$50
   8EC3:  c7028e       sta    $028E
 L8EC6:
@@ -4051,7 +4051,7 @@ LA12B:
   A12D:  81           rts    
 
 ;---------------------------------------------------------------
-; Ctrl_Init   [0xA12E]   <- 8794
+; Backlight_Init   [0xA12E]   <- 8794
 ;---------------------------------------------------------------
   A12E:  4f           clra   
   A12F:  c702b4       sta    $02B4
@@ -4061,7 +4061,7 @@ LA12B:
   A139:  81           rts    
 
 ;---------------------------------------------------------------
-; Ctrl_sub_A13A   [0xA13A]   <- AA04, BA31, BA80
+; Backlight_SupplyStep   [0xA13A]   <- AA04, BA31, BA80
 ;---------------------------------------------------------------
   A13A:  a7fe         ais    #$FE
   A13C:  4f           clra   
@@ -4153,7 +4153,7 @@ LA1E1:
   A1E4:  20dd         bra    LA1C3
 
 ;---------------------------------------------------------------
-; Ctrl_Start   [0xA1E6]   <- 87B5
+; Backlight_Start   [0xA1E6]   <- 87B5
 ;---------------------------------------------------------------
   A1E6:  87           psha   
   A1E7:  4f           clra   
@@ -4172,8 +4172,8 @@ LA1E1:
   A20C:  c7023c       sta    $023C
   A20F:  c7023d       sta    $023D
   A212:  c7023b       sta    $023B
-  A215:  cda874       jsr    Motor_sub_A874
-  A218:  cda91b       jsr    Motor_sub_A91B
+  A215:  cda874       jsr    Output_Stop
+  A218:  cda91b       jsr    Output_StallCheck
   A21B:  95           tsx    
   A21C:  f7           sta    ,x
   A21D:  2612         bne    LA231
@@ -4185,7 +4185,7 @@ LA1E1:
   A22C:  a60b         lda    #$0B
   A22E:  c7023b       sta    $023B
 LA231:
-  A231:  cda8b6       jsr    Motor_sub_A8B6
+  A231:  cda8b6       jsr    Output_SelfTest
   A234:  4b12         dbnza  LA248
   A236:  a607         lda    #$07
   A238:  c702a8       sta    $02A8
@@ -4204,13 +4204,13 @@ LA248:
   A255:  81           rts    
 
 ;---------------------------------------------------------------
-; Ctrl_Task   [0xA256]   <- 88B4
+; Backlight_Task   [0xA256]   <- 88B4
 ;---------------------------------------------------------------
-  A256:  ad02         bsr    Ctrl_Step
+  A256:  ad02         bsr    Backlight_StepTimer
   A258:  2016         bra    LA270
 
 ;---------------------------------------------------------------
-; Ctrl_Step   [0xA25A]   <- Ctrl_Task
+; Backlight_StepTimer   [0xA25A]   <- Backlight_Task
 ;---------------------------------------------------------------
   A25A:  32022b       ldhx   $022B
   A25D:  65ffff       cphx   #$FFFF
@@ -4234,7 +4234,7 @@ LA27B:
          ; switch: 0->LA299  1->LA2A4  2->LA305  3->LA35C  4->LA3AE  5->LA3FE  6->LA446  7->LA482  8->LA47F  9->LA4F4  10->LA533  11->LA570
 ;   .... data/gap A296-A299 ....
 LA299:
-  A299:  cda874       jsr    Motor_sub_A874
+  A299:  cda874       jsr    Output_Stop
   A29C:  a601         lda    #$01
   A29E:  c7023b       sta    $023B
   A2A1:  cca5aa       jmp    $A5AA
@@ -4282,7 +4282,7 @@ LA2F1:
   A2F6:  c7022a       sta    $022A
   A2F9:  cca5aa       jmp    $A5AA
 LA2FC:
-  A2FC:  cda874       jsr    Motor_sub_A874
+  A2FC:  cda874       jsr    Output_Stop
   A2FF:  cda669       jsr    $A669
 LA302:
   A302:  cca5aa       jmp    $A5AA
@@ -4321,10 +4321,10 @@ LA32A:
 LA348:
   A348:  a60b         lda    #$0B
   A34A:  c7023b       sta    $023B
-  A34D:  cda874       jsr    Motor_sub_A874
+  A34D:  cda874       jsr    Output_Stop
   A350:  cca5aa       jmp    $A5AA
 LA353:
-  A353:  cda874       jsr    Motor_sub_A874
+  A353:  cda874       jsr    Output_Stop
   A356:  cda669       jsr    $A669
 LA359:
   A359:  cca5aa       jmp    $A5AA
@@ -4357,7 +4357,7 @@ LA37E:
   A38B:  4a           deca   
   A38C:  26cb         bne    LA359
 LA38E:
-  A38E:  cda874       jsr    Motor_sub_A874
+  A38E:  cda874       jsr    Output_Stop
   A391:  5f           clrx   
   A392:  a6fa         lda    #$FA
   A394:  cdb653       jsr    Delay_Loop
@@ -4367,7 +4367,7 @@ LA38E:
   A39F:  c7023b       sta    $023B
   A3A2:  cca5aa       jmp    $A5AA
 LA3A5:
-  A3A5:  cda874       jsr    Motor_sub_A874
+  A3A5:  cda874       jsr    Output_Stop
   A3A8:  cda669       jsr    $A669
 LA3AB:
   A3AB:  cca5aa       jmp    $A5AA
@@ -4391,13 +4391,13 @@ LA3AE:
 LA3CD:
   A3CD:  a60b         lda    #$0B
   A3CF:  c7023b       sta    $023B
-  A3D2:  cda874       jsr    Motor_sub_A874
+  A3D2:  cda874       jsr    Output_Stop
   A3D5:  cca5aa       jmp    $A5AA
 LA3D8:
   A3D8:  32022b       ldhx   $022B
   A3DB:  650032       cphx   #$0032
   A3DE:  250b         bcs    LA3EB
-  A3E0:  cda874       jsr    Motor_sub_A874
+  A3E0:  cda874       jsr    Output_Stop
   A3E3:  a606         lda    #$06
   A3E5:  c7023b       sta    $023B
 LA3E8:
@@ -4420,7 +4420,7 @@ LA3FE:
   A407:  4b34         dbnza  LA43D
   A409:  c60295       lda    $0295
   A40C:  4b1d         dbnza  LA42B
-  A40E:  cda874       jsr    Motor_sub_A874
+  A40E:  cda874       jsr    Output_Stop
   A411:  5f           clrx   
   A412:  a6fa         lda    #$FA
   A414:  cdb653       jsr    Delay_Loop
@@ -4437,12 +4437,12 @@ LA42B:
   A42B:  32022b       ldhx   $022B
   A42E:  650032       cphx   #$0032
   A431:  25f5         bcs    LA428
-  A433:  cda874       jsr    Motor_sub_A874
+  A433:  cda874       jsr    Output_Stop
   A436:  4f           clra   
   A437:  c7023b       sta    $023B
   A43A:  cca5aa       jmp    $A5AA
 LA43D:
-  A43D:  cda874       jsr    Motor_sub_A874
+  A43D:  cda874       jsr    Output_Stop
   A440:  cda669       jsr    $A669
   A443:  cca5aa       jmp    $A5AA
 LA446:
@@ -4455,7 +4455,7 @@ LA446:
   A451:  c60295       lda    $0295
   A454:  2609         bne    LA45F
   A456:  c7023b       sta    $023B
-  A459:  cda874       jsr    Motor_sub_A874
+  A459:  cda874       jsr    Output_Stop
 LA45C:
   A45C:  cca5aa       jmp    $A5AA
 LA45F:
@@ -4471,7 +4471,7 @@ LA46E:
   A473:  c7022a       sta    $022A
   A476:  cca5aa       jmp    $A5AA
 LA479:
-  A479:  cda874       jsr    Motor_sub_A874
+  A479:  cda874       jsr    Output_Stop
   A47C:  cda669       jsr    $A669
 LA47F:
   A47F:  cca5aa       jmp    $A5AA
@@ -4484,14 +4484,14 @@ LA482:
   A48B:  4b61         dbnza  LA4EE
   A48D:  c6023c       lda    $023C
   A490:  262e         bne    LA4C0
-  A492:  cda8b6       jsr    Motor_sub_A8B6
+  A492:  cda8b6       jsr    Output_SelfTest
   A495:  95           tsx    
   A496:  f7           sta    ,x
   A497:  4b27         dbnza  LA4C0
   A499:  c6023a       lda    $023A
   A49C:  a102         cmp    #$02
   A49E:  261c         bne    LA4BC
-  A4A0:  cda874       jsr    Motor_sub_A874
+  A4A0:  cda874       jsr    Output_Stop
   A4A3:  a60b         lda    #$0B
   A4A5:  c7023b       sta    $023B
   A4A8:  a601         lda    #$01
@@ -4514,14 +4514,14 @@ LA4C0:
   A4C7:  270d         beq    LA4D6
   A4C9:  a601         lda    #$01
   A4CB:  c7023d       sta    $023D
-  A4CE:  cda874       jsr    Motor_sub_A874
+  A4CE:  cda874       jsr    Output_Stop
   A4D1:  a60b         lda    #$0B
   A4D3:  c7023b       sta    $023B
 LA4D6:
   A4D6:  95           tsx    
   A4D7:  7d           tst    ,x
   A4D8:  260c         bne    LA4E6
-  A4DA:  cda874       jsr    Motor_sub_A874
+  A4DA:  cda874       jsr    Output_Stop
   A4DD:  a606         lda    #$06
   A4DF:  c7023b       sta    $023B
   A4E2:  4f           clra   
@@ -4599,7 +4599,7 @@ LA56A:
 LA570:
   A570:  c6029c       lda    $029C
   A573:  4b29         dbnza  LA59E
-  A575:  cda91b       jsr    Motor_sub_A91B
+  A575:  cda91b       jsr    Output_StallCheck
   A578:  95           tsx    
   A579:  f7           sta    ,x
   A57A:  4b2e         dbnza  LA5AA
@@ -4620,10 +4620,10 @@ LA598:
   A59B:  7c           inc    ,x
   A59C:  200c         bra    LA5AA
 LA59E:
-  A59E:  cda874       jsr    Motor_sub_A874
+  A59E:  cda874       jsr    Output_Stop
   A5A1:  2007         bra    LA5AA
 LA5A3:
-  A5A3:  cda874       jsr    Motor_sub_A874
+  A5A3:  cda874       jsr    Output_Stop
   A5A6:  4f           clra   
   A5A7:  c7023b       sta    $023B
 LA5AA:
@@ -4640,7 +4640,7 @@ LA5AA:
   A5B4:  81           rts    
 
 ;---------------------------------------------------------------
-; MotorPos_Task   [0xA5B5]   <- 8935
+; Scan_Task   [0xA5B5]   <- 8935
 ;---------------------------------------------------------------
   A5B5:  87           psha   
   A5B6:  cda99a       jsr    $A99A
@@ -4652,7 +4652,7 @@ LA5AA:
   A5C2:  262f         bne    LA5F3
   A5C4:  c6029b       lda    $029B
   A5C7:  262a         bne    LA5F3
-  A5C9:  cda91b       jsr    Motor_sub_A91B
+  A5C9:  cda91b       jsr    Output_StallCheck
   A5CC:  95           tsx    
   A5CD:  f7           sta    ,x
   A5CE:  2623         bne    LA5F3
@@ -4793,7 +4793,7 @@ LA692:
   A693:  81           rts    
 
 ;---------------------------------------------------------------
-; Ctrl_SlowTask   [0xA694]   <- 8938
+; Backlight_SlowTask   [0xA694]   <- 8938
 ;---------------------------------------------------------------
   A694:  87           psha   
   A695:  c6023c       lda    $023C
@@ -4801,14 +4801,14 @@ LA692:
   A69A:  32022f       ldhx   $022F
   A69D:  3e022d       cphx   $022D
   A6A0:  244b         bcc    LA6ED
-  A6A2:  cda8b6       jsr    Motor_sub_A8B6
+  A6A2:  cda8b6       jsr    Output_SelfTest
   A6A5:  95           tsx    
   A6A6:  f7           sta    ,x
   A6A7:  4b1b         dbnza  LA6C4
   A6A9:  c6023a       lda    $023A
   A6AC:  a102         cmp    #$02
   A6AE:  2609         bne    LA6B9
-  A6B0:  cda874       jsr    Motor_sub_A874
+  A6B0:  cda874       jsr    Output_Stop
   A6B3:  4f           clra   
   A6B4:  c7023a       sta    $023A
   A6B7:  2004         bra    LA6BD
@@ -4849,7 +4849,7 @@ LA6F7:
   A6F8:  81           rts    
 
 ;---------------------------------------------------------------
-; MotorPos_Init   [0xA6F9]   <- 87B2
+; Scan_Init   [0xA6F9]   <- 87B2
 ;---------------------------------------------------------------
   A6F9:  4f           clra   
   A6FA:  c70247       sta    $0247
@@ -4862,11 +4862,11 @@ LA6F7:
   A70C:  c70242       sta    $0242
   A70F:  4f           clra   
   A710:  c70245       sta    $0245
-  A713:  cda88f       jsr    Motor_sub_A88F
-  A716:  cca874       jmp    Motor_sub_A874
+  A713:  cda88f       jsr    Ladder_Reset
+  A716:  cca874       jmp    Output_Stop
 
 ;---------------------------------------------------------------
-; MotorPos_Isr   [0xA719]   <- 8A1F
+; Scan_Isr   [0xA719]   <- 8A1F
 ;---------------------------------------------------------------
   A719:  c60245       lda    $0245
   A71C:  273a         beq    LA758
@@ -4924,7 +4924,7 @@ LA773:
   A775:  c60247       lda    $0247
   A778:  a108         cmp    #$08
   A77A:  2503         bcs    LA77F
-  A77C:  cda957       jsr    Motor_sub_A957
+  A77C:  cda957       jsr    Ladder_ReadRef
 LA77F:
   A77F:  450008       ldhx   #$0008
   A782:  f6           lda    ,x
@@ -5073,7 +5073,7 @@ LA852:
   A873:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_sub_A874   [0xA874]   <- A215, A299, A2FC, A34D, A353, A38E, A3A5, A3D2
+; Output_Stop   [0xA874]   <- A215, A299, A2FC, A34D, A353, A38E, A3A5, A3D2
 ;---------------------------------------------------------------
   A874:  4f           clra   
   A875:  c70245       sta    $0245
@@ -5091,7 +5091,7 @@ LA852:
   A88E:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_sub_A88F   [0xA88F]   <- A713
+; Ladder_Reset   [0xA88F]   <- A713
 ;---------------------------------------------------------------
   A88F:  4f           clra   
   A890:  c70240       sta    $0240
@@ -5118,7 +5118,7 @@ LA8B2:
   A8B5:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_sub_A8B6   [0xA8B6]   <- A231, A492, A6A2
+; Output_SelfTest   [0xA8B6]   <- A231, A492, A6A2
 ;---------------------------------------------------------------
   A8B6:  a7fe         ais    #$FE
   A8B8:  450008       ldhx   #$0008
@@ -5171,14 +5171,14 @@ LA8B2:
   A911:  95           tsx    
   A912:  7f           clr    ,x
 LA913:
-  A913:  cda874       jsr    Motor_sub_A874
+  A913:  cda874       jsr    Output_Stop
   A916:  95           tsx    
   A917:  f6           lda    ,x
   A918:  a702         ais    #$02
   A91A:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_sub_A91B   [0xA91B]   <- A218, A575, A5C9
+; Output_StallCheck   [0xA91B]   <- A218, A575, A5C9
 ;---------------------------------------------------------------
   A91B:  a7fd         ais    #$FD
   A91D:  5f           clrx   
@@ -5216,7 +5216,7 @@ LA952:
   A956:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_sub_A957   [0xA957]   <- A77C
+; Ladder_ReadRef   [0xA957]   <- A77C
 ;---------------------------------------------------------------
   A957:  5f           clrx   
   A958:  a602         lda    #$02
@@ -5256,17 +5256,17 @@ LA996:
   A99D:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_Init   [0xA99E]   <- 8791
+; BacklightOut_Init   [0xA99E]   <- 8791
 ;---------------------------------------------------------------
   A99E:  4f           clra   
   A99F:  c702b2       sta    $02B2
   A9A2:  5f           clrx   
   A9A3:  4c           inca   
-  A9A4:  ad66         bsr    Fault_Report
+  A9A4:  ad66         bsr    Status_SetCode
   A9A6:  ccb620       jmp    Diag_sub_B620
 
 ;---------------------------------------------------------------
-; Motor_Task   [0xA9A9]   <- 88E0
+; BacklightOut_Task   [0xA9A9]   <- 88E0
 ;---------------------------------------------------------------
   A9A9:  87           psha   
   A9AA:  c60275       lda    g_outputVariant
@@ -5291,7 +5291,7 @@ LA9CF:
   A9D4:  2615         bne    LA9EB
   A9D6:  201c         bra    LA9F4
 LA9D8:
-  A9D8:  c60276       lda    g_ctrlErrFlag
+  A9D8:  c60276       lda    g_funcFault
   A9DB:  4b0e         dbnza  LA9EB
   A9DD:  a650         lda    #$50
   A9DF:  c702b2       sta    $02B2
@@ -5314,20 +5314,20 @@ LA9F9:
   A9FC:  9ee701       sta    1,s
   A9FF:  2609         bne    LAA0A
   AA01:  cdb5a3       jsr    Diag_Init
-  AA04:  cda13a       jsr    Ctrl_sub_A13A
+  AA04:  cda13a       jsr    Backlight_SupplyStep
   AA07:  cdb5e4       jsr    $B5E4
 LAA0A:
   AA0A:  8a           pulh   
   AA0B:  81           rts    
 
 ;---------------------------------------------------------------
-; Fault_Report   [0xAA0C]   <- 87FC, A9A4
+; Status_SetCode   [0xAA0C]   <- 87FC, A9A4
 ;---------------------------------------------------------------
   AA0C:  c70249       sta    $0249
   AA0F:  81           rts    
 
 ;---------------------------------------------------------------
-; Fault_Init   [0xAA10]   <- 879D
+; Buttons_Init   [0xAA10]   <- 879D
 ;---------------------------------------------------------------
   AA10:  87           psha   
   AA11:  95           tsx    
@@ -5356,7 +5356,7 @@ LAA2C:
   AA35:  81           rts    
 
 ;---------------------------------------------------------------
-; Fault_Task   [0xAA36]   <- 889D, ACC1
+; Buttons_Scan   [0xAA36]   <- 889D, ACC1
 ;---------------------------------------------------------------
   AA36:  87           psha   
   AA37:  4f           clra   
@@ -5364,7 +5364,7 @@ LAA2C:
   AA39:  f7           sta    ,x
 LAA3A:
   AA3A:  5f           clrx   
-  AA3B:  ad2b         bsr    Fault_sub_AA68
+  AA3B:  ad2b         bsr    Button_Debounce
   AA3D:  95           tsx    
   AA3E:  7c           inc    ,x
   AA3F:  f6           lda    ,x
@@ -5385,7 +5385,7 @@ LAA4F:
   AA59:  410903       cbeqa  #$09, LAA5F
 LAA5C:
   AA5C:  5f           clrx   
-  AA5D:  ad7e         bsr    Fault_sub_AADD
+  AA5D:  ad7e         bsr    Button_Action
 LAA5F:
   AA5F:  95           tsx    
   AA60:  7c           inc    ,x
@@ -5396,7 +5396,7 @@ LAA5F:
   AA67:  81           rts    
 
 ;---------------------------------------------------------------
-; Fault_sub_AA68   [0xAA68]   <- AA3B
+; Button_Debounce   [0xAA68]   <- AA3B
 ;---------------------------------------------------------------
   AA68:  87           psha   
   AA69:  89           pshx   
@@ -5459,7 +5459,7 @@ LAADA:
   AADC:  81           rts    
 
 ;---------------------------------------------------------------
-; Fault_sub_AADD   [0xAADD]   <- AA5D
+; Button_Action   [0xAADD]   <- AA5D
 ;---------------------------------------------------------------
   AADD:  87           psha   
   AADE:  89           pshx   
@@ -5494,7 +5494,7 @@ LAADA:
   AB0F:  97           tax    
   AB10:  d6c205       lda    $C205,x
   AB13:  5f           clrx   
-  AB14:  ad4c         bsr    Fault_sub_AB62
+  AB14:  ad4c         bsr    Button_Action2
   AB16:  a704         ais    #$04
   AB18:  95           tsx    
   AB19:  e702         sta    2,x
@@ -5542,7 +5542,7 @@ LAB5F:
   AB61:  81           rts    
 
 ;---------------------------------------------------------------
-; Fault_sub_AB62   [0xAB62]   <- AB14
+; Button_Action2   [0xAB62]   <- AB14
 ;---------------------------------------------------------------
   AB62:  87           psha   
   AB63:  89           pshx   
@@ -5793,7 +5793,7 @@ LAC7C:
   ACBF:  95           tsx    
   ACC0:  7f           clr    ,x
 LACC1:
-  ACC1:  cdaa36       jsr    Fault_Task
+  ACC1:  cdaa36       jsr    Buttons_Scan
   ACC4:  95           tsx    
   ACC5:  7c           inc    ,x
   ACC6:  f6           lda    ,x
@@ -7127,7 +7127,7 @@ LB598:
 LB5C4:
   B5C4:  c60275       lda    g_outputVariant
   B5C7:  260c         bne    LB5D5
-  B5C9:  c60276       lda    g_ctrlErrFlag
+  B5C9:  c60276       lda    g_funcFault
   B5CC:  2607         bne    LB5D5
   B5CE:  45000a       ldhx   #$000A
   B5D1:  f6           lda    ,x
@@ -7232,7 +7232,7 @@ LB657:
   B666:  81           rts    
 
 ;---------------------------------------------------------------
-; Motor_sub_B667   [0xB667]   <- B81A, BA29, BA78
+; Ramp_Limit   [0xB667]   <- B81A, BA29, BA78
 ;---------------------------------------------------------------
   B667:  87           psha   
   B668:  89           pshx   
@@ -7473,7 +7473,7 @@ LB7D8:
   B7D8:  81           rts    
 
 ;---------------------------------------------------------------
-; Heater_Init   [0xB7D9]   <- 87C4
+; Heating_Init   [0xB7D9]   <- 87C4
 ;---------------------------------------------------------------
   B7D9:  a646         lda    #$46
   B7DB:  c7028a       sta    $028A
@@ -7484,7 +7484,7 @@ LB7D8:
   B7E7:  81           rts    
 
 ;---------------------------------------------------------------
-; Heater_Task   [0xB7E8]   <- 88F4, 8919
+; Heating_Task   [0xB7E8]   <- 88F4, 8919
 ;---------------------------------------------------------------
   B7E8:  87           psha   
   B7E9:  5f           clrx   
@@ -7518,7 +7518,7 @@ LB807:
   B815:  87           psha   
   B816:  89           pshx   
   B817:  9ee607       lda    7,s
-  B81A:  cdb667       jsr    Motor_sub_B667
+  B81A:  cdb667       jsr    Ramp_Limit
   B81D:  a706         ais    #$06
   B81F:  c70109       sta    $0109
   B822:  450135       ldhx   #$0135
@@ -7624,7 +7624,7 @@ LB8D9:
   B8DF:  25f8         bcs    LB8D9
   B8E1:  9eef01       stx    1,s
   B8E4:  c70277       sta    $0277
-  B8E7:  c70276       sta    g_ctrlErrFlag
+  B8E7:  c70276       sta    g_funcFault
   B8EA:  c60299       lda    g_featureFlags
   B8ED:  a401         and    #$01
   B8EF:  2611         bne    LB902
@@ -7808,10 +7808,10 @@ LB971:
   BA24:  87           psha   
   BA25:  89           pshx   
   BA26:  9ee607       lda    7,s
-  BA29:  cdb667       jsr    Motor_sub_B667
+  BA29:  cdb667       jsr    Ramp_Limit
   BA2C:  a706         ais    #$06
   BA2E:  c702b6       sta    g_supplyVoltage
-  BA31:  cda13a       jsr    Ctrl_sub_A13A
+  BA31:  cda13a       jsr    Backlight_SupplyStep
   BA34:  c602e2       lda    g_tempValue
   BA37:  5f           clrx   
   BA38:  cdb653       jsr    Delay_Loop
@@ -7856,10 +7856,10 @@ LBA65:
   BA73:  87           psha   
   BA74:  89           pshx   
   BA75:  9ee607       lda    7,s
-  BA78:  cdb667       jsr    Motor_sub_B667
+  BA78:  cdb667       jsr    Ramp_Limit
   BA7B:  a706         ais    #$06
   BA7D:  c702b6       sta    g_supplyVoltage
-  BA80:  cda13a       jsr    Ctrl_sub_A13A
+  BA80:  cda13a       jsr    Backlight_SupplyStep
   BA83:  4f           clra   
   BA84:  c702db       sta    $02DB
 LBA87:
@@ -8125,7 +8125,7 @@ LBC51:
   BC53:  81           rts    
 
 ;---------------------------------------------------------------
-; Outputs_Init   [0xBC54]   <- 878B
+; ResetLog_Init   [0xBC54]   <- 878B
 ;---------------------------------------------------------------
   BC54:  c61800       lda    SRS
   BC57:  c7010b       sta    $010B
@@ -8173,7 +8173,7 @@ LBCB0:
   BCB0:  81           rts    
 
 ;---------------------------------------------------------------
-; Outputs_Task   [0xBCB1]   <- 88E3, 893B
+; SelfTest_Task   [0xBCB1]   <- 88E3, 893B
 ;---------------------------------------------------------------
   BCB1:  ad1a         bsr    LBCCD
   BCB3:  cdbd7d       jsr    $BD7D
@@ -8192,7 +8192,7 @@ LBCCA:
   BCCB:  20f9         bra    LBCC6
 
 ;---------------------------------------------------------------
-; sub_BCCD   [0xBCCD]   <- Outputs_Task
+; sub_BCCD   [0xBCCD]   <- SelfTest_Task
 ;---------------------------------------------------------------
   BCCD:  a7fc         ais    #$FC
   BCCF:  32010c       ldhx   $010C

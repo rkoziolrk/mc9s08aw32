@@ -1,20 +1,20 @@
 /*
  * selftest.c - Reset-cause logging and background flash integrity check.
  *
- * NOTE on names: the two routines here are called `Outputs_Init` (0xBC54)
- * and `Outputs_Task` (0xBCB1) from the scheduler, and keep those symbol
+ * NOTE on names: the two routines here are called `ResetLog_Init` (0xBC54)
+ * and `SelfTest_Task` (0xBCB1) from the scheduler, and keep those symbol
  * names so the call sites match; their *actual* function, recovered from
  * the disassembly, is reset bookkeeping and a flash CRC self-test, which
  * is why they live in selftest.c.  (The auto-generated label in
  * reference/application.asm still reads "Outputs_*".)
  *
- *  - Outputs_Init  [0xBC54] : read the reset-status register, and for a
+ *  - ResetLog_Init  [0xBC54] : read the reset-status register, and for a
  *    watchdog (COP), illegal-opcode or LVD reset increment the matching
  *    reset counter in the configuration (cfg[0x44]/[0x45]/[0x47]) and ask
  *    for the configuration to be saved.  Then select the output variant
  *    from PTC4 and run the output calibration (Adc_sub_BEB7).
  *
- *  - Outputs_Task  [0xBCB1] : walk the application flash in blocks,
+ *  - SelfTest_Task  [0xBCB1] : walk the application flash in blocks,
  *    accumulate an XOR checksum and, when the whole image has been
  *    scanned, compare it with the expected 0xCAFE; on mismatch set the
  *    "image corrupt" bit (bit4) in g_linAppFlags.  Also updates the
@@ -32,14 +32,14 @@
 
 extern void Adc_sub_BEB7(void);          /* [0xBEB7] output calibration */
 static void FlashSelfTest_Step(void);    /* [0xBCCD] */
-extern void Outputs_sub_BD7D(void);      /* [0xBD7D] output refresh */
+extern void Output_Refresh(void);      /* [0xBD7D] output refresh */
 
 byte g_resetStatus;                      /* [0x010B] latched SRS value */
 
 /* ======================================================================
- * Outputs_Init  [0xBC54]  (really: reset-cause logging + variant select)
+ * ResetLog_Init  [0xBC54]  (really: reset-cause logging + variant select)
  * ====================================================================== */
-void Outputs_Init(void)
+void ResetLog_Init(void)
 {
     g_resetStatus = SRS;
     *(volatile byte *)0x010B = g_resetStatus;
@@ -76,12 +76,12 @@ void Outputs_Init(void)
 }
 
 /* ======================================================================
- * Outputs_Task  [0xBCB1]  (really: flash self-test + output refresh)
+ * SelfTest_Task  [0xBCB1]  (really: flash self-test + output refresh)
  * ====================================================================== */
-void Outputs_Task(void)
+void SelfTest_Task(void)
 {
     FlashSelfTest_Step();                /* [0xBCCD] incremental CRC */
-    Outputs_sub_BD7D();                  /* [0xBD7D] drive the outputs */
+    Output_Refresh();                  /* [0xBD7D] drive the outputs */
 
     /* diagnostic state: 0x0E while the LIN app flags indicate the special
      * states 0x08/0x10 or no valid config, otherwise 0 */

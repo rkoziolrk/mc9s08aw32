@@ -1,16 +1,16 @@
 /*
- * fault.c - Fault input debouncing and latching
+ * buttons.c - Fault input debouncing and latching
  *           (decompiled from 0xAA0C, 0xAA10, 0xAA36, 0xAA68 and 0xAADD).
  *
  * The module keeps a per-input state array at 0x024E (13 bytes).  Each
  * monitored fault input is described by an "input descriptor" pair in
  * flash: a port-register pointer (0xC1F9) and an AND mask (0xC1FA); a
- * matching action handler lives at 0xC1FB.  Fault_Task() walks the inputs
+ * matching action handler lives at 0xC1FB.  Buttons_Scan() walks the inputs
  * every 5 ticks:
- *   - inputs 0..2       are always debounced (Fault_sub_AA68);
+ *   - inputs 0..2       are always debounced (Button_Debounce);
  *   - inputs 3..12      are debounced too, but the dispatch of their
  *     action is gated by g_featureFlags (some only apply to variants
- *     4/5/8/9) via Fault_sub_AADD.
+ *     4/5/8/9) via Button_Action.
  *
  * The debounce uses the low nibble of each state byte as a 0..15 counter:
  * while the input differs from its expected level the counter counts up;
@@ -22,24 +22,24 @@
 /* fault state array [0x024E .. 0x025A] and the reported code [0x0249] */
 #define FAULT_STATE(i)  (*(volatile byte *)(0x024E + (i)))
 
-static void Fault_Debounce(byte index);      /* [0xAA68] */
-static void Fault_DispatchAction(byte index); /* [0xAADD] */
+static void Button_Debounce(byte index);      /* [0xAA68] */
+static void Button_Action(byte index); /* [0xAADD] */
 
 /* ======================================================================
- * Fault_Report  [0xAA0C]
+ * Status_SetCode  [0xAA0C]
  * Latches an externally supplied fault/status code into 0x0249.
  * ====================================================================== */
-void Fault_Report(byte code)
+void Status_SetCode(byte code)
 {
     *(volatile byte *)0x0249 = code;
 }
 
 /* ======================================================================
- * Fault_Init  [0xAA10]
+ * Buttons_Init  [0xAA10]
  * Clears the fault state array.  (Indices 0..2 and 3..12 are cleared in
  * two loops in the original, with the same effect of zeroing all 13.)
  * ====================================================================== */
-void Fault_Init(void)
+void Buttons_Init(void)
 {
     byte i;
     for (i = 0; i < 3; i++)  FAULT_STATE(i) = 0;
@@ -47,34 +47,34 @@ void Fault_Init(void)
 }
 
 /* ======================================================================
- * Fault_Task  [0xAA36]
+ * Buttons_Scan  [0xAA36]
  * Debounces inputs 0..2 unconditionally, then debounces/acts on inputs
  * 3..9 depending on the enabled features.
  * ====================================================================== */
-void Fault_Task(void)
+void Buttons_Scan(void)
 {
     byte i;
 
     for (i = 0; i < 3; i++) {
-        Fault_Debounce(i);
+        Button_Debounce(i);
     }
 
     for (i = 3; i < 10; i++) {
         if (g_featureFlags & FEAT_BIT0) {
-            Fault_DispatchAction(i);            /* all inputs active */
+            Button_Action(i);            /* all inputs active */
         } else {
             /* without FEAT_BIT0 only inputs 4,5,8,9 dispatch an action */
             if (i == 4 || i == 5 || i == 8 || i == 9) {
                 /* these skip the action (cbeqa -> branch past) */
             } else {
-                Fault_DispatchAction(i);
+                Button_Action(i);
             }
         }
     }
 }
 
 /* ======================================================================
- * Fault_Debounce  [0xAA68]  (one input)
+ * Button_Debounce  [0xAA68]  (one input)
  * Reads the input through its descriptor (port ptr @0xC1F9[i], mask
  * @0xC1FA[i]), compares against the stored expected level and updates the
  * low-nibble counter in FAULT_STATE(i).  On 0 the fault is cleared; on
@@ -83,7 +83,7 @@ void Fault_Task(void)
  * ====================================================================== */
 #define FLASH8(a)  (*(const volatile byte *)(a))
 
-static void Fault_Debounce(byte index)
+static void Button_Debounce(byte index)
 {
     /* Descriptor table at 0xC1F8, 4 bytes per input:
      *   [1] 0xC1F9+i*4 : GPIO input register (zero-page, e.g. 0x04 = PTCD)
@@ -109,11 +109,11 @@ static void Fault_Debounce(byte index)
 }
 
 /* ======================================================================
- * Fault_DispatchAction  [0xAADD]
+ * Button_Action  [0xAADD]
  * Acts on a latched fault for the higher-numbered (feature-gated) inputs.
  * Detailed branch table in reference/application.asm 0xAADD-0xAB61.
  * ====================================================================== */
-static void Fault_DispatchAction(byte index)
+static void Button_Action(byte index)
 {
     (void)index;
 }

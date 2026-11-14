@@ -44,7 +44,7 @@ extern void LinSig_InitRx(void);   /* [0x8EDA] */
 extern void LinSig_InitTx(void);   /* [0x8F18] */
 extern void Lin_WakeOrReset(byte x, byte mode); /* [0x98A3] */
 
-byte g_ctrlErrFlag;   /* [0x0276] */
+byte g_funcFault;   /* [0x0276] */
 
 /* ======================================================================
  * LinApp_Reset  [0x8E10]
@@ -59,7 +59,7 @@ void LinApp_Reset(void)
     LinSig_InitTx();
     Lin_Init();
     g_linAppFlags &= (byte)~LINAPP_BUS_ACT;   /* clear bit2 */
-    g_ctrlErrFlag = 0;
+    g_funcFault = 0;
     Lin_WakeOrReset(0, 2);
     ExitCritical();
 }

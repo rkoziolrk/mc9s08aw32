@@ -1,48 +1,46 @@
 /*
- * DEVICE NOTE: this is NOT a motor controller. Per DEVICE.md the real
- * device is the Audi A4 B8 steering-wheel button panel; the Ctrl_/Motor_/
- * MotorPos_ names are placeholders for BUTTON scanning (analogue resistor
- * ladder), the SCROLL/roll wheel, and BACKLIGHT PWM dimming. Structure and
- * hardware access are correct; only the names' theme is off.
- * motor_control.c - Motor driver, closed-loop position controller and
- *                   the commutation / position ISR.
- *                   (decompiled from 0xA12E, 0xA1E6, 0xA256, 0xA694,
- *                    0xA6F9, 0xA719, 0xA5B5, 0xA99E, 0xA9A9 and helpers.)
+ * wheel_io.c - Steering-wheel I/O: button-ladder scan, scroll/roll wheel,
+ *              and backlight (PWM) dimming control.
+ *              (decompiled from 0xA12E, 0xA1E6, 0xA256, 0xA694, 0xA6F9,
+ *               0xA719, 0xA5B5, 0xA99E, 0xA9A9 and helpers; see DEVICE.md.)
  *
- * This is the largest subsystem and is reconstructed here at the level of
- * the module structure, hardware access and the concrete state variables;
- * the inner control-loop arithmetic (PI/ramp stepping, the A874/A88F/A8B6/
- * A91B/A957 helpers and the position compare table) is intricate fixed-
- * point code best read in reference/application.asm, which is cross-
- * referenced at each function.
+ * This is the largest subsystem.  The function names are the real ones:
+ *   Backlight_*  - the dimming state machine (brightness ramp toward the
+ *                  commanded level, gated by the supply window)
+ *   Scan_*       - the 1 ms button-ladder / scroll sampling + PWM tick
+ *   Ladder_*     - analogue button-ladder reads and plausibility checks
+ *   Output_*     - the physical output stage (enable / stop / self-test)
+ *   Ramp_Limit   - the slew-rate limiter (backlight fade, supply filter)
+ * The inner per-state arithmetic and the ladder compare table are intricate
+ * fixed-point code cross-referenced to reference/application.asm.
  *
- * Only built/active on the variants whose feature flags contain
- * FEAT_MOTOR; the application disables these tasks in g_testMode.
+ * Active only on variants whose feature flags contain the scroll/backlight
+ * bit (0x04); the application disables these tasks in g_testMode.
  *
  * Key RAM:
- *   0x02B2  motor output level / PWM duty request
- *   0x0244  current position           0x0246/0x0247  position window
- *   0x0245  motor-moving flag          0x0241/0x0242  limits
- *   0x022F..0x023D  controller working set (integrator, target, flags)
+ *   0x02B2  backlight output level / PWM duty request
+ *   0x0244  current scan position       0x0246/0x0247  position window
+ *   0x0245  scan-active flag             0x0241/0x0242  ladder references
+ *   0x022F..0x023D  controller working set (ramp, target, flags)
  */
 #include "app.h"
 
 #define R8(a)  (*(volatile byte *)(a))
 
-extern void Motor_sub_A874(void);   /* [0xA874] set up the H-bridge/PWM pins */
-extern byte Motor_sub_A88F(void);   /* [0xA88F] read end-stop / hall inputs   */
-extern byte Motor_sub_A8B6(void);   /* [0xA8B6] self-test / stall check       */
-extern byte Motor_sub_A91B(void);   /* [0xA91B] self-test / stall check       */
-extern byte Motor_sub_A957(void);   /* [0xA957] drive the output stage        */
+extern void Output_Stop(void);   /* [0xA874] set up the H-bridge/PWM pins */
+extern byte Ladder_Reset(void);   /* [0xA88F] read end-stop / hall inputs   */
+extern byte Output_SelfTest(void);   /* [0xA8B6] self-test / stall check       */
+extern byte Output_StallCheck(void);   /* [0xA91B] self-test / stall check       */
+extern byte Ladder_ReadRef(void);   /* [0xA957] drive the output stage        */
 
-byte g_motorLevel AT(0x02B2);       /* [0x02B2] requested output level */
+byte g_backlightLevel AT(0x02B2);       /* [0x02B2] requested output level */
 
 /* ======================================================================
- * Ctrl_Init  [0xA12E]
+ * Backlight_Init  [0xA12E]
  * Clears the controller accumulators (0x02B4/0x02B5) and sets the "idle"
  * state flag (0x02B3 = 1).
  * ====================================================================== */
-void Ctrl_Init(void)
+void Backlight_Init(void)
 {
     R8(0x02B4) = 0;
     R8(0x02B5) = 0;
@@ -50,27 +48,27 @@ void Ctrl_Init(void)
 }
 
 /* ======================================================================
- * Ctrl_Start  [0xA1E6]
+ * Backlight_Start  [0xA1E6]
  * Zeroes the whole controller working set (0x022F..0x023D) and runs the
- * initial self-tests (Motor_sub_A874/A91B/A8B6).  Depending on their
+ * initial self-tests (Output_Stop/A91B/A8B6).  Depending on their
  * results it records the start-up fault code in 0x02A8 and flags the
  * controller state (0x029B/0x029C/0x023B/0x023C).  Full branch logic:
  * reference/application.asm 0xA1E6-0xA255.
  * ====================================================================== */
-void Ctrl_Start(void)
+void Backlight_Start(void)
 {
     byte i;
     for (i = 0x2F; i <= 0x3D; i++) {
         R8(0x0200 + i) = 0;             /* clear 0x022F..0x023D */
     }
-    Motor_sub_A874();
-    if (Motor_sub_A91B() == 0) {        /* self-test A failed */
+    Output_Stop();
+    if (Output_StallCheck() == 0) {        /* self-test A failed */
         R8(0x02A8) = 0x0B;
         R8(0x029B) = 1;
         R8(0x029C) = 1;
         R8(0x023B) = 0x0B;
     }
-    if (Motor_sub_A8B6() == 0) {        /* self-test B failed */
+    if (Output_SelfTest() == 0) {        /* self-test B failed */
         R8(0x02A8) = 0x07;
         R8(0x029B) = 1;
         R8(0x023C) = 1;
@@ -80,7 +78,7 @@ void Ctrl_Start(void)
 }
 
 /* ======================================================================
- * Ctrl_Task  [0xA256]   (DEVICE: backlight dimming state machine)
+ * Backlight_Task  [0xA256]   (DEVICE: backlight dimming state machine)
  *
  * The 10-tick control step.  Really drives the button BACKLIGHT: a 12-state
  * machine (switch on g_ctrlState = 0x023B, via switch_jump) that ramps the
@@ -91,11 +89,11 @@ void Ctrl_Start(void)
  * State table (0x023B): 0->A299 1->A2A4 2->A305 3->A35C 4->A3AE 5->A3FE
  *                       6->A446 7->A482 8->A47F 9->A4F4 10->A533 11->A570
  * Key variables:
- *   0x022B:0x022C  16-bit brightness ramp counter / dwell timer (Ctrl_Step)
+ *   0x022B:0x022C  16-bit brightness ramp counter / dwell timer (Backlight_StepTimer)
  *   0x0229         target brightness (from g_cfg[0x32 + mode])
  *   0x0291..0x0296 decoded command bits (level/mode/flags, see lin_signals.c)
  *   g_supplyVoltage via a lookup (0xA64E) gates the brightness
- *   Motor_sub_A874 turns the backlight output off
+ *   Output_Stop turns the backlight output off
  * Full per-state bodies: reference/application.asm 0xA256-0xA6F8.
  * ====================================================================== */
 /* ---- state-machine variables (absolute addresses preserved) ---------- */
@@ -110,8 +108,8 @@ void Ctrl_Start(void)
 #define CMD_FLAG_B   R8(0x0295)
 #define CMD_FLAG_C   R8(0x0296)
 
-void Ctrl_Step(void);   /* [0xA25A] forward decl */
-static void Ctrl_ClearRamp(void) { RAMP_HI = 0; RAMP_LO = 0; }   /* [0xA5AD] */
+void Backlight_StepTimer(void);   /* [0xA25A] forward decl */
+static void Backlight_ClearRamp(void) { RAMP_HI = 0; RAMP_LO = 0; }   /* [0xA5AD] */
 
 /* [0xA64E] 1 if the supply voltage is inside the operating window
  * [cfg 0x016C .. 0x016E] */
@@ -124,7 +122,7 @@ static byte Supply_InWindow(void)
 }
 
 /* [0xA608] low-voltage edge debounce (counts 0x0235 to 2 once v < cfg 0x016E) */
-static byte Ctrl_VoltLowDeb(void)
+static byte Supply_LowEdgeDeb(void)
 {
     if (g_supplyVoltage >= R8(0x016E)) return 0;
     if (R8(0x0235) >= 2) R8(0x0235) = 0; else R8(0x0235)++;
@@ -132,7 +130,7 @@ static byte Ctrl_VoltLowDeb(void)
 }
 
 /* [0xA62B] high-voltage edge debounce (counts 0x0236 once v > cfg 0x016C) */
-static byte Ctrl_VoltHighDeb(void)
+static byte Supply_HighEdgeDeb(void)
 {
     if (g_supplyVoltage <= R8(0x016C)) return 0;
     if (R8(0x0236) >= 2) R8(0x0236) = 0; else R8(0x0236)++;
@@ -140,15 +138,15 @@ static byte Ctrl_VoltHighDeb(void)
 }
 
 /* [0xA669] on a debounced voltage edge, branch to the low/high-voltage states */
-static void Ctrl_CheckVoltEdges(void)
+static void Backlight_CheckVoltEdges(void)
 {
-    if (Ctrl_VoltHighDeb() == 1 && R8(0x0236) == 0) CS = 9;
-    if (Ctrl_VoltLowDeb()  == 1 && R8(0x0235) == 0) CS = 10;
+    if (Supply_HighEdgeDeb() == 1 && R8(0x0236) == 0) CS = 9;
+    if (Supply_LowEdgeDeb()  == 1 && R8(0x0235) == 0) CS = 10;
 }
 
 /* [0xA894] button-ladder plausibility: sets 0x0240 bit1, and if the ladder
  * ratio 0x0241/0x0242 >= 8 clears it (implausible). Returns 0x0240. */
-static byte Ctrl_PlausCheck(void)
+static byte Ladder_PlausCheck(void)
 {
     R8(0x0240) |= 0x02;
     if (R8(0x0242) != 0 && (byte)(R8(0x0241) / R8(0x0242)) >= 0x08) {
@@ -192,29 +190,29 @@ static void Backlight_Dwell(void)
 }
 
 /* ======================================================================
- * Ctrl_Task  [0xA256]   DEVICE: backlight dimming / button-feedback FSM.
+ * Backlight_Task  [0xA256]   DEVICE: backlight dimming / button-feedback FSM.
  * Faithful transcription of the 12-state machine (0xA270-0xA6F8).  Each
  * state gates on the supply-voltage window (Supply_InWindow), the decoded
  * dimming command (CMD_*), and the ramp/dwell timer, then drives the
  * backlight output and advances g_ctrlState (CS).
  * ====================================================================== */
-void Ctrl_Task(void)
+void Backlight_Task(void)
 {
     byte r;
 
-    Ctrl_Step();                                /* [0xA25A] advance dwell timer */
+    Backlight_StepTimer();                                /* [0xA25A] advance dwell timer */
 
-    if (CS >= 0x0C) { Motor_sub_A874(); CS = 0; return; }   /* [0xA270->A5A3] guard */
+    if (CS >= 0x0C) { Output_Stop(); CS = 0; return; }   /* [0xA270->A5A3] guard */
 
     switch (CS) {
 
     case 0:                                     /* LA299: off / init */
-        Motor_sub_A874();
+        Output_Stop();
         CS = 1;
         return;
 
     case 1:                                     /* LA2A4: idle, await command */
-        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (Supply_InWindow() != 1) { Output_Stop(); Backlight_CheckVoltEdges(); return; }
         if (CMD_FLAG_B == 1 && CMD_FLAG_A == 0 && R8(0x029B) == 0) {
             if (CMD_POS_LO != 0) {
                 Backlight_On19((byte)(CMD_POS_HI + 0x0A));
@@ -222,7 +220,7 @@ void Ctrl_Task(void)
                 RAMP_LO = 0x0F; RAMP_HI = 0;
             }
             CS = 2;
-            Ctrl_ClearRamp();
+            Backlight_ClearRamp();
             return;
         }
         /* LA2E2 */
@@ -232,21 +230,21 @@ void Ctrl_Task(void)
         return;
 
     case 2:                                     /* LA305: ramp toward target */
-        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
-        if (R8(0x029B) != 0) { CS = 0x0B; Motor_sub_A874(); return; }  /* LA348 fault */
+        if (Supply_InWindow() != 1) { Output_Stop(); Backlight_CheckVoltEdges(); return; }
+        if (R8(0x029B) != 0) { CS = 0x0B; Output_Stop(); return; }  /* LA348 fault */
         if (RAMP < 0x000F) {
             /* still within the initial dwell */
         }
         /* LA32A: fetch the per-mode brightness from config, apply it */
         R8(0x0229) = g_cfg.raw[0x32 + (CMD_MODE & 0x0F)];
         Backlight_On14(R8(0x0229));
-        Ctrl_ClearRamp();
+        Backlight_ClearRamp();
         CS = 3;
         return;
 
     case 3:                                     /* LA35C: holding at level */
         r = Supply_InWindow();
-        if (r != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (r != 1) { Output_Stop(); Backlight_CheckVoltEdges(); return; }
         /* compare the commanded level 0x0151 (<<2) against the ramp timer */
         {
             word lvl = (word)(R8(0x0151) << 2);
@@ -255,73 +253,73 @@ void Ctrl_Task(void)
                 return;                         /* loop back into state 3 */
             }
         }
-        Motor_sub_A874();
+        Output_Stop();
         Delay_Loop(0xFA);
         Backlight_Dwell();                      /* [0xA855] */
-        Ctrl_ClearRamp();
+        Backlight_ClearRamp();
         CS = 4;
         return;
 
     case 4:                                     /* LA3AE: dwell + plausibility */
-        if (Supply_InWindow() != 1) { Ctrl_CheckVoltEdges(); return; }
-        r = Ctrl_PlausCheck();                  /* [0xA894] */
+        if (Supply_InWindow() != 1) { Backlight_CheckVoltEdges(); return; }
+        r = Ladder_PlausCheck();                  /* [0xA894] */
         if (r != 0) {
-            if (r == 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+            if (r == 1) { Output_Stop(); Backlight_CheckVoltEdges(); return; }
             if (r == 2) R8(0x023D) = 1;
-            CS = 0x0B; Motor_sub_A874();        /* implausible -> fault */
+            CS = 0x0B; Output_Stop();        /* implausible -> fault */
             return;
         }
-        if (RAMP < 0x0032) { Motor_sub_A874(); CS = 6; return; }   /* LA3D8 */
+        if (RAMP < 0x0032) { Output_Stop(); CS = 6; return; }   /* LA3D8 */
         if (CMD_FLAG_B != 0) { CS = 6; return; }
         CS = 5;
         return;
 
     case 5:                                     /* LA3FE: step the dimming */
-        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (Supply_InWindow() != 1) { Output_Stop(); Backlight_CheckVoltEdges(); return; }
         if (CMD_FLAG_B != 1) {                  /* LA42B */
             if (RAMP < 0x0032) return;
-            Motor_sub_A874();
+            Output_Stop();
             CS = 0;
             return;
         }
-        Motor_sub_A874();
+        Output_Stop();
         Delay_Loop(0xFA);
         Backlight_On14((byte)(CMD_POS_HI + 0x0A));
-        Ctrl_ClearRamp();
+        Backlight_ClearRamp();
         CS = 2;
         return;
 
     case 6:                                     /* LA446: wait for release */
-        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
-        if (CMD_FLAG_B == 0) { CS = 0; Motor_sub_A874(); return; }
+        if (Supply_InWindow() != 1) { Output_Stop(); Backlight_CheckVoltEdges(); return; }
+        if (CMD_FLAG_B == 0) { CS = 0; Output_Stop(); return; }
         if (CMD_FLAG_C == 1 && R8(0x022A) == 0) CS = 7;
         if (CMD_FLAG_C != 0) return;
         R8(0x022A) = 0;
         return;
 
     case 7:                                     /* LA482: self-test / special */
-        if (Supply_InWindow() != 1) { Ctrl_CheckVoltEdges(); return; }
+        if (Supply_InWindow() != 1) { Backlight_CheckVoltEdges(); return; }
         if (R8(0x023C) == 0) {
-            if (Motor_sub_A8B6() != 0) {        /* drive self-test ok */
+            if (Output_SelfTest() != 0) {        /* drive self-test ok */
                 if (R8(0x023A) == 2) {          /* LA49E */
-                    Motor_sub_A874(); CS = 0x0B;
+                    Output_Stop(); CS = 0x0B;
                     R8(0x029B) = 1; R8(0x023A) = 0; R8(0x023C) = 1;
                     R8(0x02A8) = 7;
                 } else { R8(0x023A)++; }
             }
         }
-        r = Ctrl_PlausCheck();
-        if (r & 0x02) { R8(0x023D) = 1; Motor_sub_A874(); CS = 0x0B; }
-        if (r == 0) { Motor_sub_A874(); CS = 6; R8(0x023C) = 0; }
+        r = Ladder_PlausCheck();
+        if (r & 0x02) { R8(0x023D) = 1; Output_Stop(); CS = 0x0B; }
+        if (r == 0) { Output_Stop(); CS = 6; R8(0x023C) = 0; }
         R8(0x022A) = 1;
         return;
 
     case 8:                                     /* LA47F: (shares state 7 exit) */
-        Ctrl_CheckVoltEdges();
+        Backlight_CheckVoltEdges();
         return;
 
     case 9:                                     /* LA4F4: low-voltage handling */
-        if (g_supplyVoltage < R8(0x016D)) { Ctrl_CheckVoltEdges(); return; }
+        if (g_supplyVoltage < R8(0x016D)) { Backlight_CheckVoltEdges(); return; }
         if (g_supplyVoltage < R8(0x016E)) {     /* LA51B */
             if (R8(0x0231) >= 2) { R8(0x0231) = 0; CS = 6; }
             else R8(0x0231)++;
@@ -343,8 +341,8 @@ void Ctrl_Task(void)
         return;
 
     default:                                    /* case 11, LA570: fault recovery */
-        if ((--R8(0x029C)) != 0) { Motor_sub_A874(); return; }
-        if (Motor_sub_A91B() != 0) return;      /* stuck-button / short check */
+        if ((--R8(0x029C)) != 0) { Output_Stop(); return; }
+        if (Output_StallCheck() != 0) return;      /* stuck-button / short check */
         if (R8(0x0237) == 2) {
             R8(0x02A8) = 0; R8(0x029B) = 0; R8(0x029C) = 0;
             CS = 6; R8(0x0237) = 0;
@@ -355,9 +353,9 @@ void Ctrl_Task(void)
     }
 }
 
-/* Ctrl_Step [0xA25A] - count the 16-bit ramp/dwell timer 0x022B:0x022C up
+/* Backlight_StepTimer [0xA25A] - count the 16-bit ramp/dwell timer 0x022B:0x022C up
  * to 0xFFFF, then wrap to 0 (the per-state dwell between brightness steps). */
-void Ctrl_Step(void)
+void Backlight_StepTimer(void)
 {
     word t = (word)((R8(0x022B) << 8) | R8(0x022C));
     if (t < 0xFFFF) {
@@ -371,45 +369,45 @@ void Ctrl_Step(void)
 }
 
 /* ======================================================================
- * Ctrl_sub_A13A  [0xA13A]
+ * Backlight_SupplyStep  [0xA13A]
  * Controller sub-step called from Supply_Task after each supply reading
  * (slew-rate updates of the two accumulators 0x02B4/0x02B5).  See asm.
  * ====================================================================== */
-void Ctrl_sub_A13A(void)
+void Backlight_SupplyStep(void)
 {
     /* see reference/application.asm 0xA13A-0xA1E5. */
 }
 
 /* ======================================================================
- * Ctrl_SlowTask  [0xA694]
+ * Backlight_SlowTask  [0xA694]
  * Slow controller housekeeping (10-tick slot 10): recomputes the position
  * window and refreshes the output enable. See asm 0xA694-0xA6F8.
  * ====================================================================== */
-void Ctrl_SlowTask(void)
+void Backlight_SlowTask(void)
 {
 }
 
 /* ======================================================================
- * Motor_Init  [0xA99E]
- * Clears the output level, reports the initial status (Fault_Report(1))
+ * BacklightOut_Init  [0xA99E]
+ * Clears the output level, reports the initial status (Status_SetCode(1))
  * and stops the TPM1-CH2 output (Diag_StopTestOutput).
  * ====================================================================== */
-void Motor_Init(void)
+void BacklightOut_Init(void)
 {
-    g_motorLevel = 0;
-    Fault_Report(1);
+    g_backlightLevel = 0;
+    Status_SetCode(1);
     /* jmp Diag_sub_B620 - stop the test output (see diag.c) */
 }
 
 /* ======================================================================
- * Motor_Task  [0xA9A9]
+ * BacklightOut_Task  [0xA9A9]
  * Translates the decoded command (on/off 0x028F, level 0x028E) into the
- * motor output level 0x02B2, honouring the controller error flag and the
+ * backlight output level 0x02B2, honouring the function-fault flag and the
  * special 0x7F "hold" / 0x50 "fault safe" levels.  For the PWM output
  * variant (g_outputVariant != 0) it takes the alternate path.  Full
  * decision tree: reference/application.asm 0xA9A9-0xA9F9.
  * ====================================================================== */
-void Motor_Task(void)
+void BacklightOut_Task(void)
 {
     if (g_outputVariant != 0) {
         /* PWM-output variant path (asm LA9F4) */
@@ -419,21 +417,21 @@ void Motor_Task(void)
         if (R8(0x028E) != 0x7F && R8(0x0249) == 0) {
             byte lvl = R8(0x028E);
             if (lvl < 0x65) lvl = 0x64;
-            g_motorLevel = lvl;
+            g_backlightLevel = lvl;
         }
     } else {                                    /* command = OFF */
-        if (g_ctrlErrFlag != 0) {
-            g_motorLevel = 0x50;                /* safe level */
+        if (g_funcFault != 0) {
+            g_backlightLevel = 0x50;                /* safe level */
             R8(0x0008) |= 0x01;                 /* enable brake pin */
         }
     }
 }
 
 /* ======================================================================
- * MotorPos_Init  [0xA6F9]
+ * Scan_Init  [0xA6F9]
  * Resets the position tracking (0x0241..0x0247) and runs the pin setup.
  * ====================================================================== */
-void MotorPos_Init(void)
+void Scan_Init(void)
 {
     R8(0x0247) = 0;
     R8(0x0246) = 0;
@@ -442,19 +440,19 @@ void MotorPos_Init(void)
     R8(0x0241) = 1;
     R8(0x0242) = 0xFF;
     R8(0x0245) = 0;
-    Motor_sub_A88F();
-    Motor_sub_A874();
+    Ladder_Reset();
+    Output_Stop();
 }
 
 /* ======================================================================
- * MotorPos_Isr  [0xA719]   (called every 1 ms from Isr_Tpm2Ch0)
- * While the motor is moving (0x0245 != 0) it compares the current position
+ * Scan_Isr  [0xA719]   (called every 1 ms from Isr_Tpm2Ch0)
+ * While a scan is active (0x0245 != 0) it compares the current scan position
  * (0x0244) against the window edges (0x0246/0x0247) and drives the
  * direction / brake outputs (PTED bits via the 0x0008/0x000A control
  * registers) accordingly, stopping at the end stops.  Full compare logic:
  * reference/application.asm 0xA719-0xA7...
  * ====================================================================== */
-INTERRUPT void MotorPos_Isr(void)
+INTERRUPT void Scan_Isr(void)
 {
     if (R8(0x0245) == 0) {
         return;                                 /* not moving */
@@ -471,11 +469,11 @@ INTERRUPT void MotorPos_Isr(void)
 }
 
 /* ======================================================================
- * MotorPos_Task  [0xA5B5]
+ * Scan_Task  [0xA5B5]
  * Periodic position task (10-tick slot 10): updates the commanded window
  * from the LIN position command and arms a move.  See asm 0xA5B5-0xA6F8.
  * ====================================================================== */
-void MotorPos_Task(void)
+void Scan_Task(void)
 {
 }
 
@@ -483,8 +481,8 @@ void MotorPos_Task(void)
  * Device helper routines (previously referenced; now reconstructed).
  * ====================================================================== */
 
-/* Motor_sub_A874 [0xA874] - stop the H-bridge drive and clear the move. */
-void Motor_sub_A874(void)
+/* Output_Stop [0xA874] - stop the H-bridge drive and clear the move. */
+void Output_Stop(void)
 {
     R8(0x0245) = 0;                 /* clear "moving" flag        */
     R8(0x0008) &= (byte)~0x04;      /* bridge enable pin low      */
@@ -493,17 +491,17 @@ void Motor_sub_A874(void)
     R8(0x029A) = 1;
 }
 
-/* Motor_sub_A88F [0xA88F] - clear the end-stop/limit state. */
-byte Motor_sub_A88F(void)
+/* Ladder_Reset [0xA88F] - clear the end-stop/limit state. */
+byte Ladder_Reset(void)
 {
     R8(0x0240) = 0;
     return 0;
 }
 
-/* Motor_sub_A91B [0xA91B] - stall / over-current check.
- * Reads motor current (ADC ch 0x0A) and feedback (ch 2); if current/feedback
+/* Output_StallCheck [0xA91B] - stall / over-current check.
+ * Reads the ladder/supply current (ADC ch 0x0A) and feedback (ch 2); if current/feedback
  * >= 7 it flags a stall (0x0240 bit2) and returns 0, otherwise returns 1. */
-byte Motor_sub_A91B(void)
+byte Output_StallCheck(void)
 {
     byte current  = Adc_Read(0x0A);
     byte feedback = Adc_Read(0x02);
@@ -518,10 +516,10 @@ byte Motor_sub_A91B(void)
     return 1;
 }
 
-/* Motor_sub_A957 [0xA957] - sample the end-stop reference level.
+/* Ladder_ReadRef [0xA957] - sample the end-stop reference level.
  * Reads the feedback channel (ch 2) three times with delays and stores the
  * running maximum in 0x0242 (the end-stop threshold). */
-byte Motor_sub_A957(void)
+byte Ladder_ReadRef(void)
 {
     byte a, b;
     R8(0x0105) = Adc_Read(0x02);
@@ -538,13 +536,13 @@ byte Motor_sub_A957(void)
     return b;
 }
 
-/* Motor_sub_A8B6 [0xA8B6] - motor drive self-test.
- * Briefly energises the bridge, measures motor current (ADC ch 0x0A) and
+/* Output_SelfTest [0xA8B6] - output self-test.
+ * Briefly energises the bridge, measures the ladder/supply current (ADC ch 0x0A) and
  * feedback (ch 2) and checks the current/feedback ratio against a minimum
  * (0x12).  A ratio below the threshold (or no feedback) is a fault: it
- * clears 0x0240 bit0 and returns 0.  Always stops the drive (Motor_sub_A874)
+ * clears 0x0240 bit0 and returns 0.  Always stops the drive (Output_Stop)
  * before returning. */
-byte Motor_sub_A8B6(void)
+byte Output_SelfTest(void)
 {
     byte current, ok = 1;
 
@@ -563,12 +561,12 @@ byte Motor_sub_A8B6(void)
             ok = 0;
         }
     }
-    Motor_sub_A874();                   /* stop the drive */
+    Output_Stop();                   /* stop the drive */
     return ok;
 }
 
 /* ======================================================================
- * Motor_Ramp  [0xB667]   slew-rate limiter
+ * Ramp_Limit  [0xB667]   slew-rate limiter
  * Moves a value toward a target by at most 'step' per call.  Parameter
  * block (on the stack in the original): current value, target, step and a
  * "still moving" flag pointer.  When step == 0, or the target is already
@@ -578,7 +576,7 @@ byte Motor_sub_A8B6(void)
  * motor outputs.  (Exact signed arithmetic: reference/application.asm
  * 0xB667-0xB706.)
  * ====================================================================== */
-byte Motor_Ramp(byte step, byte *flag, byte current, byte target)
+byte Ramp_Limit(byte step, byte *flag, byte current, byte target)
 {
     int delta;
 

@@ -88,22 +88,22 @@ void App_InitAll(void)
     Inputs_Init();                      /* [0xB84D] */
     Tpm2_Init();                        /* [0x8A60] time base + LIN capture      */
     COP_Feed();                         /* [0x89D0] */
-    Outputs_Init();                     /* [0xBC54] */
+    ResetLog_Init();                     /* [0xBC54] */
     Tpm1_Init();                        /* [0x8A29] PWM outputs                  */
-    Motor_Init();                       /* [0xA99E] */
-    Ctrl_Init();                        /* [0xA12E] */
+    BacklightOut_Init();                       /* [0xA99E] */
+    Backlight_Init();                        /* [0xA12E] */
     Diag_Init();                        /* [0xB5A3] */
     LinSignals_Init();                  /* [0xAC81] */
-    Fault_Init();                       /* [0xAA10] */
+    Buttons_Init();                       /* [0xAA10] */
     Sensor_Init();                      /* [0xA0E6] */
     Supply_Init();                      /* [0xB932] */
 
-    if ((g_featureFlags & FEAT_MOTOR) && (g_testMode == 0)) {
-        MotorPos_Init();                /* [0xA6F9] */
-        Ctrl_Start();                   /* [0xA1E6] */
+    if ((g_featureFlags & FEAT_SCROLL) && (g_testMode == 0)) {
+        Scan_Init();                /* [0xA6F9] */
+        Backlight_Start();                   /* [0xA1E6] */
     }
     if ((g_featureFlags & FEAT_HEATER) && (g_testMode == 0)) {
-        Heater_Init();                  /* [0xB7D9] */
+        Heating_Init();                  /* [0xB7D9] */
     }
     LinApp_Reset();                     /* [0x8E10] */
     LinSignals_Refresh();               /* [0xACB7] */
@@ -134,7 +134,7 @@ static void Sleep_Process(void)
     if ((g_linAppFlags & LINAPP_SLEEP_REQ) && (g_sleepPrepared == 0)) {
         g_sleepState = 0x01;
         Nvm_RequestSave();              /* [0x8B39] */
-        Fault_Report(0);                /* [0xAA0C] */
+        Status_SetCode(0);                /* [0xAA0C] */
         g_sleepPrepared = 1;
     }
 }
@@ -209,7 +209,7 @@ static void Task_2Ticks(void)
 static void Task_5Ticks(void)
 {
     if (g_testMode == 0) {
-        Fault_Task();                   /* [0xAA36] */
+        Buttons_Scan();                   /* [0xAA36] */
     }
 }
 
@@ -223,8 +223,8 @@ static void Task_10Ticks(void)
     g_slot10++;
     NvmTask_Run();                      /* [0x898D] */
 
-    if ((g_featureFlags & FEAT_MOTOR) && (g_testMode == 0)) {
-        Ctrl_Task();                    /* [0xA256] */
+    if ((g_featureFlags & FEAT_SCROLL) && (g_testMode == 0)) {
+        Backlight_Task();                    /* [0xA256] */
     }
 
     switch (g_slot10) {
@@ -233,13 +233,13 @@ static void Task_10Ticks(void)
         break;
 
     case 2: case 4: case 6: case 8:
-        Motor_Task();                   /* [0xA9A9] */
-        Outputs_Task();                 /* [0xBCB1] */
+        BacklightOut_Task();                   /* [0xA9A9] */
+        SelfTest_Task();                 /* [0xBCB1] */
         break;
 
     case 5:
         if ((g_featureFlags & FEAT_HEATER) && (g_testMode == 0)) {
-            Heater_Task();              /* [0xB7E8] */
+            Heating_Task();              /* [0xB7E8] */
         }
         LinApp_DecodeCommand();
         if (g_testRequest == 1) {
@@ -254,16 +254,16 @@ static void Task_10Ticks(void)
 
     case 10:
         if ((g_featureFlags & FEAT_HEATER) && (g_testMode == 0)) {
-            Heater_Task();
+            Heating_Task();
         }
-        if ((g_featureFlags & FEAT_MOTOR) &&
+        if ((g_featureFlags & FEAT_SCROLL) &&
             (g_supplyVoltage <  CFG_U_MAX_RUN()) &&
             (g_supplyVoltage >  CFG_U_MIN_RUN()) &&
             (g_testMode == 0)) {
-            MotorPos_Task();            /* [0xA5B5] */
+            Scan_Task();            /* [0xA5B5] */
         }
-        Ctrl_SlowTask();                /* [0xA694] */
-        Outputs_Task();
+        Backlight_SlowTask();                /* [0xA694] */
+        SelfTest_Task();
         Sleep_Process();                /* [0x87DC] */
         LinApp_CountIdle();             /* [0x8EC7] */
         Diag_SlowTask();                /* [0xB5AA] */
@@ -362,7 +362,7 @@ void COP_Feed(void)
  * Isr_Tpm2Ch0  [0x89DA]  (TPM2 channel 0 output compare)
  * Re-arms the compare 9998 bus clocks later, sets the tick flag every
  * second interrupt (and advances g_tickCount + runs the LIN timeout
- * handler) and services the motor commutation on every interrupt.
+ * handler) and services the button/scroll scan on every interrupt.
  * ====================================================================== */
 INTERRUPT void Isr_Tpm2Ch0(void)
 {
@@ -381,7 +381,7 @@ INTERRUPT void Isr_Tpm2Ch0(void)
         LinTp_Timer();                  /* [0x9C31] */
         g_tickCount++;
     }
-    MotorPos_Isr();                     /* [0xA719] */
+    Scan_Isr();                     /* [0xA719] */
     (void)dummy;
 }
 

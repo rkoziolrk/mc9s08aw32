@@ -27,7 +27,7 @@
 /* ---------------------------------------------------------------------- */
 #define FEAT_BIT0        0x01
 #define FEAT_HEATER      0x02     /* checked in the 10-tick task          */
-#define FEAT_MOTOR       0x04     /* checked in init and the 10-tick task */
+#define FEAT_SCROLL       0x04     /* checked in init and the 10-tick task */
 #define FEAT_BIT3        0x08
 
 /* LIN application flag byte g_linAppFlags [0x02AE] */
@@ -155,18 +155,18 @@ void EnterCritical(void);
 void ExitCritical(void);
 byte Delay_Loop(word count);
 
-/* The remaining modules (control, motor, outputs, supply, fault, diag,
+/* The remaining modules (backlight/scroll, button-scan, outputs, supply, diag,
  * sensor, heater, signals, LIN transport & signal layer) are documented
  * in reference/function_index.md and reference/application.asm.  Their
  * prototypes are declared where reconstructed. */
-void Ctrl_Init(void);  void Ctrl_Start(void);  void Ctrl_Task(void);  void Ctrl_SlowTask(void);
-void Motor_Init(void); void Motor_Task(void);  void MotorPos_Init(void); void MotorPos_Task(void);
-INTERRUPT void MotorPos_Isr(void);
-void Fault_Init(void); void Fault_Task(void);  void Fault_Report(byte code);
-void Outputs_Init(void); void Outputs_Task(void);
+void Backlight_Init(void);  void Backlight_Start(void);  void Backlight_Task(void);  void Backlight_SlowTask(void);
+void BacklightOut_Init(void); void BacklightOut_Task(void);  void Scan_Init(void); void Scan_Task(void);
+INTERRUPT void Scan_Isr(void);
+void Buttons_Init(void); void Buttons_Scan(void);  void Status_SetCode(byte code);
+void ResetLog_Init(void); void SelfTest_Task(void);
 void Inputs_Init(void); void Supply_Init(void); void Supply_Task(void);
 extern byte g_resetStatus;   /* [0x010B] selftest.c */
-extern byte g_ctrlErrFlag;   /* [0x0276] lin_signals.c */
+extern byte g_funcFault;   /* [0x0276] lin_signals.c */
 extern volatile byte g_mulDiv_tmp;  /* [0x00C6] runtime.c */
 
 /* runtime.c compiler helpers */
@@ -177,7 +177,7 @@ word mul16(word a, word b);
 word div16(word dividend, word divisor);
 int  sdiv16(int dividend, int divisor);
 extern byte g_supplyDebounce, g_supplyLatched, g_tempCode, g_tempValue;  /* supply.c */
-void Heater_Init(void); void Heater_Task(void);
+void Heating_Init(void); void Heating_Task(void);
 void Diag_Init(void);  void Diag_Task(void);   void Diag_SlowTask(void);
 void Sensor_Init(void); void Signals_Task(void);
 void LinSignals_Init(void); void LinSignals_Refresh(void);

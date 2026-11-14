@@ -12,7 +12,7 @@
  *      g_variantSub   - a sub-code (always 1 for the valid bands)
  *      g_featureFlags - the bitmask of enabled features (FEAT_*)
  * A reading that falls in none of the valid bands sets g_testMode = 1,
- * which disables the motor/heater/fault tasks (see main.c).
+ * which disables the scroll/heating/button tasks (see main.c).
  *
  * Variant_ReadStraps() additionally samples five coding/strap inputs and
  * packs them into g_codingByte (used by the LIN identification signals).
@@ -100,7 +100,7 @@ void Adc_DetectVariant(void)
     } else if (v >= 0xA3 && v < 0xB2) {  /* band 8 */
         g_variantCode  = 0x0A;
         g_variantSub   = 1;
-        g_featureFlags = 0x0C;           /* motor + bit3 */
+        g_featureFlags = 0x0C;           /* scroll + bit3 */
     } else if (v >= 0xB7 && v < 0xC9) {  /* band 9 */
         g_variantCode  = 0x0B;
         g_variantSub   = 1;

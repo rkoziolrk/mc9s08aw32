@@ -27,14 +27,14 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] Calibrated delay — `application/util.c`
 - [x] Interrupt vector mapping (doc + optional standalone table) — `application/vectors.c`
 - [x] Supply-voltage monitor — `application/supply.c` (`Supply_Init`, `Supply_Task`; aux-channel descriptor walk referenced in asm)
-- [x] Button-input debounce (DEVICE) — `application/fault.c` (`Fault_Init`, `Fault_Task`, `Fault_Debounce` 4-sample shift-register via the 0xC1F8 {port,mask,action} descriptors; action dispatch 0xC1FB referenced in asm)
+- [x] Button-input debounce (DEVICE) — `application/buttons.c` (`Buttons_Init`, `Buttons_Scan`, `Button_Debounce` 4-sample shift-register via the 0xC1F8 {port,mask,action} descriptors; action dispatch 0xC1FB referenced in asm)
 - [x] Inputs/signal-state init — `application/inputs.c` (`Inputs_Init` 0xB84D)
-- [x] Reset logging + flash self-test — `application/selftest.c` (`Outputs_Init` 0xBC54 reset-cause counters; `Outputs_Task`/`FlashSelfTest_Step` 0xBCB1 incremental XOR-16 flash check vs 0xCAFE). NOTE: auto-label 'Outputs_*' is a misnomer.
-- [x] Backlight dimming state machine (DEVICE) — `application/motor_control.c` (`Ctrl_Init`, `Ctrl_Start`, `Ctrl_Task`/`Ctrl_Step` 0xA256 — all 12 states fully reconstructed (idle/ramp/hold/dwell/dim-step/release/self-test/low-&-high-voltage/fault) with helpers Supply_InWindow, Backlight_SetLevel, Ctrl_PlausCheck, voltage-edge debounces)
-- [x] Button/output driver (DEVICE) — `application/motor_control.c` (`Motor_Init`, `Motor_Task` level decision tree)
-- [x] Button-ladder/scroll + backlight PWM tick (DEVICE) — `application/motor_control.c` (`MotorPos_Init`, `MotorPos_Isr` 0xA719, `MotorPos_Task`)
+- [x] Reset logging + flash self-test — `application/selftest.c` (`ResetLog_Init` 0xBC54 reset-cause counters; `SelfTest_Task`/`FlashSelfTest_Step` 0xBCB1 incremental XOR-16 flash check vs 0xCAFE). NOTE: auto-label 'Outputs_*' is a misnomer.
+- [x] Backlight dimming state machine (DEVICE) — `application/wheel_io.c` (`Backlight_Init`, `Backlight_Start`, `Backlight_Task`/`Backlight_StepTimer` 0xA256 — all 12 states fully reconstructed (idle/ramp/hold/dwell/dim-step/release/self-test/low-&-high-voltage/fault) with helpers Supply_InWindow, Backlight_SetLevel, Ladder_PlausCheck, voltage-edge debounces)
+- [x] Button/output driver (DEVICE) — `application/wheel_io.c` (`BacklightOut_Init`, `BacklightOut_Task` level decision tree)
+- [x] Button-ladder/scroll + backlight PWM tick (DEVICE) — `application/wheel_io.c` (`Scan_Init`, `Scan_Isr` 0xA719, `Scan_Task`)
 - [x] ADC analogue front-end — `application/sensor.c` (`Sensor_Init` 0xA0E6)
-- [x] Aux analogue input (DEVICE) — `application/heater.c` (`Heater_Init`, `Heater_Task`; open/short detect, slew-limited; `Heater_Drive` table interpolation referenced in asm)
+- [x] Aux analogue input (DEVICE) — `application/heating.c` (`Heating_Init`, `Heating_Task`; open/short detect, slew-limited; `Heating_Curve` table interpolation referenced in asm)
 - [x] Diagnostics / output test — `application/diag.c` (`Diag_Init`, `Diag_Task`, `Diag_SlowTask`)
 - [x] Publish-signal state — `application/signals.c` (`LinSignals_Init`, `LinSignals_Refresh`, `Signals_Task` 0xAE36 age counters)
 
@@ -49,10 +49,10 @@ framing and several table-driven helpers are cross-referenced to
 The bootloader stays as annotated asm by design.
 
 Helper routines reconstructed: compiler runtime (mem/mul/div/negate) in
-`application/runtime.c`; device helpers Motor_sub_A874/A88F/A91B/A957 in
-`motor_control.c`, Adc_sub_BEB7 in `selftest.c`.
-Reconstructed: Motor_Ramp 0xB667 (slew limiter) and Motor_sub_A8B6 0xA8B6
-(drive self-test) in motor_control.c. Still referenced to asm: Heater_Drive
+`application/runtime.c`; device helpers Output_Stop/A88F/A91B/A957 in
+`wheel_io.c`, Adc_sub_BEB7 in `selftest.c`.
+Reconstructed: Ramp_Limit 0xB667 (slew limiter) and Output_SelfTest 0xA8B6
+(drive self-test) in wheel_io.c. Still referenced to asm: Heating_Curve
 0xB707 (two-column table interpolation).
 
 ## How to resume in a fresh session

@@ -57,7 +57,7 @@ labels used throughout the C sources and the annotated `.asm` listings.
 | 0x8835 | `Scheduler_Run` | Cooperative scheduler, dispatches the 2/5/10/25-tick tasks |
 | 0x888D | `Task_2Ticks` | 2-tick task: supply monitor + watchdog |
 | 0x8898 | `Task_5Ticks` | 5-tick task: fault handling |
-| 0x88A1 | `Task_10Ticks` | 10-tick task (10 sub-slots): LIN decode, motor, outputs, diag, sleep |
+| 0x88A1 | `Task_10Ticks` | 10-tick task (10 sub-slots): LIN decode, scroll/backlight, outputs, diag, sleep |
 | 0x894E | `Task_25Ticks` | 25-tick task: LIN supervision + signal handling |
 | 0x8954 | `Sleep_Enter` | Enter STOP low-power mode and re-init after wake |
 | 0x895F | `App_InitAll_tail` | (see disassembly) |
@@ -65,7 +65,7 @@ labels used throughout the C sources and the annotated `.asm` listings.
 | 0x8986 | `SysOpt_Init` | SOPT: enable COP + STOP |
 | 0x898D | `NvmTask_Run` | Run the flash save state machine every 6th tick |
 | 0x89D0 | `COP_Feed` | Service the COP watchdog (0x55,0xAA to SRS) |
-| 0x89DA | `Isr_Tpm2Ch0` | TPM2 CH0 output-compare ISR: 1 ms time base + motor commutation |
+| 0x89DA | `Isr_Tpm2Ch0` | TPM2 CH0 output-compare ISR: 1 ms time base + button/scroll scan |
 | 0x8A29 | `Tpm1_Init` | TPM1 init: PWM outputs |
 | 0x8A60 | `Tpm2_Init` | TPM2 init: time base (CH0) + LIN auto-baud capture (CH1) |
 | 0x8A85 | `Nvm_Init` | Select newest valid flash config bank and load it |
@@ -152,28 +152,28 @@ labels used throughout the C sources and the annotated `.asm` listings.
 | 0xA0E0 | `crit_restore` | (see disassembly) |
 | 0xA0E6 | `Sensor_Init` | Init the position/feedback sensor input |
 | 0xA103 | `Adc_Read` | Read one ADC channel (8-bit), channel 0x1F powers the ADC down |
-| 0xA12E | `Ctrl_Init` | Init the closed-loop controller |
-| 0xA13A | `Ctrl_sub_A13A` | (see disassembly) |
-| 0xA1E6 | `Ctrl_Start` | Start the controller |
-| 0xA256 | `Ctrl_Task` | Controller periodic step |
-| 0xA25A | `Ctrl_Step` | (see disassembly) |
-| 0xA5B5 | `MotorPos_Task` | Motor position periodic task |
-| 0xA694 | `Ctrl_SlowTask` | Controller slow periodic step |
-| 0xA6F9 | `MotorPos_Init` | Init motor position tracking |
-| 0xA719 | `MotorPos_Isr` | Motor commutation / position update (1 ms) |
-| 0xA874 | `Motor_sub_A874` | (see disassembly) |
-| 0xA88F | `Motor_sub_A88F` | (see disassembly) |
-| 0xA8B6 | `Motor_sub_A8B6` | (see disassembly) |
-| 0xA91B | `Motor_sub_A91B` | (see disassembly) |
-| 0xA957 | `Motor_sub_A957` | (see disassembly) |
-| 0xA99E | `Motor_Init` | Init the motor driver |
-| 0xA9A9 | `Motor_Task` | Motor driver periodic task |
-| 0xAA0C | `Fault_Report` | Latch a fault code |
-| 0xAA10 | `Fault_Init` | Init fault handling |
-| 0xAA36 | `Fault_Task` | Fault detection/debounce task |
-| 0xAA68 | `Fault_sub_AA68` | (see disassembly) |
-| 0xAADD | `Fault_sub_AADD` | (see disassembly) |
-| 0xAB62 | `Fault_sub_AB62` | (see disassembly) |
+| 0xA12E | `Backlight_Init` | Init the backlight dimming controller |
+| 0xA13A | `Backlight_SupplyStep` | (see disassembly) |
+| 0xA1E6 | `Backlight_Start` | Start the controller |
+| 0xA256 | `Backlight_Task` | Controller periodic step |
+| 0xA25A | `Backlight_StepTimer` | (see disassembly) |
+| 0xA5B5 | `Scan_Task` | Scroll/position periodic task |
+| 0xA694 | `Backlight_SlowTask` | Controller slow periodic step |
+| 0xA6F9 | `Scan_Init` | Init the button-ladder / scroll scan |
+| 0xA719 | `Scan_Isr` | Button-ladder / scroll sampling + backlight PWM (1 ms) |
+| 0xA874 | `Output_Stop` | (see disassembly) |
+| 0xA88F | `Ladder_Reset` | (see disassembly) |
+| 0xA8B6 | `Output_SelfTest` | (see disassembly) |
+| 0xA91B | `Output_StallCheck` | (see disassembly) |
+| 0xA957 | `Ladder_ReadRef` | (see disassembly) |
+| 0xA99E | `BacklightOut_Init` | Init the backlight output stage |
+| 0xA9A9 | `BacklightOut_Task` | Backlight output periodic task |
+| 0xAA0C | `Status_SetCode` | Latch a fault code |
+| 0xAA10 | `Buttons_Init` | Init fault handling |
+| 0xAA36 | `Buttons_Scan` | Fault detection/debounce task |
+| 0xAA68 | `Button_Debounce` | (see disassembly) |
+| 0xAADD | `Button_Action` | (see disassembly) |
+| 0xAB62 | `Button_Action2` | (see disassembly) |
 | 0xAC81 | `LinSignals_Init` | Init the LIN signal mapping |
 | 0xACB7 | `LinSignals_Refresh` | Recompute the LIN publish signals |
 | 0xAE36 | `Signals_Task` | Map application state to LIN publish signals |
@@ -188,17 +188,17 @@ labels used throughout the C sources and the annotated `.asm` listings.
 | 0xB5AA | `Diag_SlowTask` | Diagnostics slow task |
 | 0xB620 | `Diag_sub_B620` | (see disassembly) |
 | 0xB653 | `Delay_Loop` | Calibrated busy-wait (count in A:X) |
-| 0xB667 | `Motor_sub_B667` | (see disassembly) |
+| 0xB667 | `Ramp_Limit` | (see disassembly) |
 | 0xB7B8 | `EnterCritical` | Nestable interrupt-disable (global) |
 | 0xB7C5 | `ExitCritical` | Nestable interrupt-enable (global) |
-| 0xB7D9 | `Heater_Init` | Init the heater function |
-| 0xB7E8 | `Heater_Task` | Heater control task |
+| 0xB7D9 | `Heating_Init` | Init the heater function |
+| 0xB7E8 | `Heating_Task` | Heater control task |
 | 0xB84D | `Inputs_Init` | Init and clear the input/signal variables |
 | 0xB932 | `Supply_Init` | Init supply-voltage monitoring |
 | 0xB9FD | `Supply_Task` | Measure and classify the supply voltage |
 | 0xBA90 | `Supply_sub_BA90` | (see disassembly) |
-| 0xBC54 | `Outputs_Init` | Init the digital/PWM outputs |
-| 0xBCB1 | `Outputs_Task` | Update the outputs |
+| 0xBC54 | `ResetLog_Init` | Init the digital/PWM outputs |
+| 0xBCB1 | `SelfTest_Task` | Update the outputs |
 | 0xBEB7 | `Adc_sub_BEB7` | (see disassembly) |
 | 0xBEC2 | `Adc_Init` | Init ADC then detect the hardware variant |
 | 0xBEC7 | `Adc_DetectVariant` | Read the coding ADC channel and map it to variant+feature flags |

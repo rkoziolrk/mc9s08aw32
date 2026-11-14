@@ -4,7 +4,7 @@
  *
  * The supply rail is sensed on ADC channel 0x0A.  Supply_Task() reads it
  * every 2 ticks (from the 2-tick scheduler task), filters it through the
- * firmware's slew-rate limiter (Motor_Ramp / 0xB667) into g_supplyVoltage
+ * firmware's slew-rate limiter (Ramp_Limit / 0xB667) into g_supplyVoltage
  * and, below a threshold, runs a debounce before declaring an under-
  * voltage.  Calibration constants g_tempCode / g_tempValue are derived
  * once in Supply_Init() from the stored configuration (cfg[0x48/0x49]).
@@ -26,8 +26,8 @@ byte g_tempValue      AT(0x02E2);   /* [0x02E2] calibration value (from cfg[0x48
 byte g_supplyVoltage;               /* [0x02B6] filtered supply (public)          */
 
 /* helpers reconstructed elsewhere / documented in the asm */
-extern byte Motor_Ramp(byte target, byte *flag, byte current, byte step); /* [0xB667] slew limiter */
-extern void Ctrl_sub_A13A(void);                                          /* [0xA13A] */
+extern byte Ramp_Limit(byte target, byte *flag, byte current, byte step); /* [0xB667] slew limiter */
+extern void Backlight_SupplyStep(void);                                          /* [0xA13A] */
 static void Supply_SampleAux(byte channel);                               /* [0xBA90] */
 
 #define SUPPLY_ADC_CH      0x0A
@@ -88,15 +88,15 @@ void Supply_Task(void)
 
     if (raw >= SUPPLY_LOW_THRESH) {
         /* normal supply: track it (slew limited) and clear the debounce */
-        g_supplyVoltage = Motor_Ramp(2, &g_supplyLatched, g_supplyVoltage, raw);
-        Ctrl_sub_A13A();
+        g_supplyVoltage = Ramp_Limit(2, &g_supplyLatched, g_supplyVoltage, raw);
+        Backlight_SupplyStep();
         g_supplyDebounce = 0;
     } else {
         /* low reading: debounce before acting */
         if (--g_supplyDebounce == 0) {
             byte ch;
-            g_supplyVoltage = Motor_Ramp(2, &g_supplyLatched, g_supplyVoltage, raw);
-            Ctrl_sub_A13A();
+            g_supplyVoltage = Ramp_Limit(2, &g_supplyLatched, g_supplyVoltage, raw);
+            Backlight_SupplyStep();
             Delay_Loop(g_tempValue);
             for (ch = 0; ch < 2; ch++) {
                 Supply_SampleAux(ch);
