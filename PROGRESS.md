@@ -39,7 +39,7 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] Publish-signal state — `application/signals.c` (`LinSignals_Init`, `LinSignals_Refresh`, `Signals_Task` 0xAE36 age counters)
 
 ## Bootloader
-- [~] Bootloader — `bootloader/bootloader.c` (reset/launch, command loop, clock/SCI init, polled SCI FIFOs, CRC, software timer; reflash frame handlers fully reconstructed in `bootloader/reflash.c`, wire format in `bootloader/protocol.md`, byte-exact framing in `reference/bootloader.asm`)
+- [x] Bootloader — `bootloader/bootloader.c` (reset/launch, command loop, clock/SCI init, polled SCI TX/RX FIFOs `Boot_SciSend`/`Boot_SciRecv`, CRC, TPM2 software timer `Boot_TimeTick`); handlers in `bootloader/reflash.c`; wire format `bootloader/protocol.md`. Only `Boot_StartupCopy` (compiler crt0 table walk) stays documented.
 
 ## Status
 All application modules now have a C file (top-level logic + hardware access

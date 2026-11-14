@@ -80,15 +80,45 @@ void Ctrl_Start(void)
 }
 
 /* ======================================================================
- * Ctrl_Task  [0xA256]
- * The periodic controller step (10-tick task slot).  It is a jump through
- * a per-state handler table (0x0238 selects the state); the states run the
- * position ramp toward the commanded target, apply the PI correction and
- * update g_motorLevel.  Dispatch + per-state code: asm 0xA256-0xA6F8.
+ * Ctrl_Task  [0xA256]   (DEVICE: backlight dimming state machine)
+ *
+ * The 10-tick control step.  Really drives the button BACKLIGHT: a 12-state
+ * machine (switch on g_ctrlState = 0x023B, via switch_jump) that ramps the
+ * backlight brightness toward the commanded level, applying the dimming
+ * level and option flags received over LIN and the per-mode brightness
+ * curve stored in the configuration.
+ *
+ * State table (0x023B): 0->A299 1->A2A4 2->A305 3->A35C 4->A3AE 5->A3FE
+ *                       6->A446 7->A482 8->A47F 9->A4F4 10->A533 11->A570
+ * Key variables:
+ *   0x022B:0x022C  16-bit brightness ramp counter / dwell timer (Ctrl_Step)
+ *   0x0229         target brightness (from g_cfg[0x32 + mode])
+ *   0x0291..0x0296 decoded command bits (level/mode/flags, see lin_signals.c)
+ *   g_supplyVoltage via a lookup (0xA64E) gates the brightness
+ *   Motor_sub_A874 turns the backlight output off
+ * Full per-state bodies: reference/application.asm 0xA256-0xA6F8.
  * ====================================================================== */
 void Ctrl_Task(void)
 {
-    /* state machine on R8(0x0238); see reference/application.asm 0xA256. */
+    Ctrl_Step();                    /* [0xA25A] advance the ramp/dwell timer */
+    /* then dispatch g_ctrlState (0x023B) through the 12-entry switch table;
+     * each state ramps brightness toward 0x0229 and advances the sequence.
+     * See reference/application.asm 0xA270-0xA6F8. */
+}
+
+/* Ctrl_Step [0xA25A] - count the 16-bit ramp/dwell timer 0x022B:0x022C up
+ * to 0xFFFF, then wrap to 0 (the per-state dwell between brightness steps). */
+void Ctrl_Step(void)
+{
+    word t = (word)((R8(0x022B) << 8) | R8(0x022C));
+    if (t < 0xFFFF) {
+        t++;
+        R8(0x022B) = (byte)(t >> 8);
+        R8(0x022C) = (byte)t;
+    } else {
+        R8(0x022B) = 0;
+        R8(0x022C) = 0;
+    }
 }
 
 /* ======================================================================

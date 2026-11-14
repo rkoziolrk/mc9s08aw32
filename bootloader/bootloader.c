@@ -67,7 +67,8 @@ static void Boot_ClockInit(void);
 static void Boot_SciInit(void);
 static byte Boot_SciPump(void);     /* [0xFC10] service TX+RX FIFOs        */
 static byte Boot_SciIdle(void);     /* [0xFC56] 1 if nothing pending       */
-static void Boot_SciPutc(byte *src, byte len);   /* [0xFC67] enqueue bytes */
+static byte Boot_SciSend(const byte *src, byte len);  /* [0xFC67] TX */
+static byte Boot_SciRecv(byte *dst, byte max);        /* [0xFCC4] RX */
 static void Boot_MemCopy(byte *dst, byte *src, byte len); /* [0xF759]       */
 static byte Boot_Crc(byte *p, word len, byte seed);       /* [0xF626]       */
 static void Boot_TimeTick(void);    /* [0xFD33] software timer service     */
@@ -264,15 +265,42 @@ static byte Boot_SciIdle(void)
 }
 
 /* ======================================================================
- * Boot_SciPutc  [0xFC67]
+ * Boot_SciSend  [0xFC67]  (asm label "Boot_SciPutc")
  * Enqueues 'len' bytes from 'src' into the TX FIFO, blocking (by pumping
  * the SCI) until there is room.  The original computes free space as
  * 8 - txCount.  Full index arithmetic: reference/bootloader.asm 0xFC67.
  * ====================================================================== */
-static void Boot_SciPutc(byte *src, byte len)
+static byte Boot_SciSend(const byte *src, byte len)
 {
-    (void)src; (void)len;
-    /* enqueue into the 8-byte TX ring at 0x0075, pumping when full. */
+    byte free = (byte)(8 - R8(0x0074));         /* room in the 8-byte TX ring */
+    byte n = (len <= free) ? len : free;
+    byte i;
+    for (i = 0; i < n; i++) {
+        byte head = R8(0x0072);
+        R8(0x0075 + head) = src[i];             /* tx ring at 0x0075 */
+        if (++R8(0x0072) >= 8) R8(0x0072) = 0;
+    }
+    R8(0x0074) = (byte)(R8(0x0074) + n);        /* tx count */
+    R8(0x0071) = (byte)(R8(0x0071) + n);        /* in-flight marker */
+    return n;
+}
+
+/* Boot_SciRecv [0xFCC4] - copy up to 'max' bytes out of the RX ring
+ * (0x0080, tail 0x007E, count 0x007F) into 'dst'; returns the count taken. */
+static byte Boot_SciRecv(byte *dst, byte max)
+{
+    byte avail = R8(0x007F);
+    byte n;
+    byte i;
+    if (avail == 0 || max == 0) return 0;
+    n = (max <= avail) ? max : avail;
+    for (i = 0; i < n; i++) {
+        byte tail = R8(0x007E);
+        dst[i] = R8(0x0080 + tail);             /* rx ring at 0x0080 */
+        if (++R8(0x007E) >= 0x18) R8(0x007E) = 0;
+    }
+    R8(0x007F) = (byte)(R8(0x007F) - n);
+    return n;
 }
 
 /* ======================================================================
@@ -322,7 +350,19 @@ static byte Boot_Crc(byte *p, word len, byte seed)
  * ====================================================================== */
 static void Boot_TimeTick(void)
 {
-    /* reads TPM2CNT, compares against the accumulator and bumps 0x009A. */
+    /* Compare the free-running TPM2 counter against the 24-bit accumulator
+     * 0x0098:0x0099 (reload interval 0x056C ~= 1 ms) and, for each elapsed
+     * interval, add 0x056C and bump the millisecond tick 0x009A.  (The exact
+     * 24-bit compare is Boot_sub_FDA9 in the asm.) */
+    word now = (word)((R8(0x0061) << 8) | R8(0x0062));   /* TPM2CNT */
+    word due = (word)((R8(0x0098) << 8) | R8(0x0099));
+    while ((word)(now - due) < 0x8000u && now >= due) {   /* interval elapsed */
+        due = (word)(due + 0x056C);
+        R8(0x0098) = (byte)(due >> 8);
+        R8(0x0099) = (byte)due;
+        R8(0x009A)++;                                    /* ms tick */
+        now = (word)((R8(0x0061) << 8) | R8(0x0062));
+    }
 }
 
 /* ======================================================================
@@ -341,7 +381,7 @@ static void Boot_TimeTick(void)
  *                    check it (Boot_Crc) and finally `jsr $01A0` to run the
  *                    downloaded programming routine, then report the result.
  *
- * Each handler sends its reply with Boot_SciPutc / a hex helper and returns
+ * Each handler sends its reply with Boot_SciSend (asm "Boot_SciPutc") and returns
  * non-zero while the frame is still in progress.  The byte-level framing is
  * in reference/bootloader.asm at the addresses above and is the byte-exact
  * reference for the protocol.
