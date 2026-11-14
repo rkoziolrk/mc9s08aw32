@@ -81,22 +81,30 @@ void Fault_Task(void)
  * 0x0F it is latched (0x1F) and the action table entry (0xC1FB[i], via the
  * rotate3 helper at 0xC048) is invoked.
  * ====================================================================== */
+#define FLASH8(a)  (*(const volatile byte *)(a))
+
 static void Fault_Debounce(byte index)
 {
-    /* The read uses the parallel flash descriptor tables
-     *   port = *(word*)(0xC1F9 + index*4);   mask = *(byte*)(0xC1FA + index*4)
-     * then: cur = (*port & mask); if it differs from expected, counter++.
-     * See reference/application.asm 0xAA68-0xAADC for the exact sequence
-     * (the index is scaled by 4 because each descriptor is 4 bytes). */
-    byte cnt = (byte)(FAULT_STATE(index) + 0 /* +1 when mismatch, see asm */);
-    cnt &= 0x0F;
-    if (cnt == 0) {
-        FAULT_STATE(index) = 0;
-    } else if (cnt == 0x0F) {
-        FAULT_STATE(index) = 0x1F;              /* latched */
-        /* dispatch action 0xC1FB[index] via rotate3/jump */
+    /* Descriptor table at 0xC1F8, 4 bytes per input:
+     *   [1] 0xC1F9+i*4 : GPIO input register (zero-page, e.g. 0x04 = PTCD)
+     *   [2] 0xC1FA+i*4 : bit mask of this button
+     *   [2..3] 0xC1FB+i*4 : action handler pointer (dispatched via rotate3)
+     * The pin level is sampled, compared to the "active" level (== mask),
+     * and shifted into a 4-bit shift register in the low nibble of the
+     * state byte.  0x0F = 4 consecutive active samples -> latch + action;
+     * 0x00 = released. */
+    byte port = FLASH8(0xC1F9 + index * 4);
+    byte mask = FLASH8(0xC1FA + index * 4);
+    byte cur  = (byte)(*(volatile byte *)(word)port & mask);
+    byte nib  = (byte)(((FAULT_STATE(index) << 1) | (cur != mask ? 1 : 0)) & 0x0F);
+
+    if (nib == 0) {
+        FAULT_STATE(index) = 0;                 /* stable released */
+    } else if (nib == 0x0F) {
+        FAULT_STATE(index) = 0x1F;              /* latched (pressed) */
+        /* dispatch the per-input action handler 0xC1FB[index] (rotate3) */
     } else {
-        FAULT_STATE(index) = (byte)((FAULT_STATE(index) & 0xF0) | cnt);
+        FAULT_STATE(index) = (byte)((FAULT_STATE(index) & 0xF0) | nib);
     }
 }
 

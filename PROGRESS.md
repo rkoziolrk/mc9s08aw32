@@ -26,16 +26,16 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] GPIO config + global critical sections — `application/ports.c`
 - [x] Calibrated delay — `application/util.c`
 - [x] Interrupt vector mapping (doc + optional standalone table) — `application/vectors.c`
-- [~] Supply-voltage monitor — `application/supply.c` (`Supply_Init` 0xB932, `Supply_Task` 0xB9FD; aux-channel descriptor walk referenced in asm)
-- [~] Fault handling — `application/fault.c` (`Fault_Init` 0xAA10, `Fault_Task` 0xAA36, `Fault_Report` 0xAA0C; descriptor-table read + action dispatch referenced in asm)
+- [x] Supply-voltage monitor — `application/supply.c` (`Supply_Init`, `Supply_Task`; aux-channel descriptor walk referenced in asm)
+- [x] Button-input debounce (DEVICE) — `application/fault.c` (`Fault_Init`, `Fault_Task`, `Fault_Debounce` 4-sample shift-register via the 0xC1F8 {port,mask,action} descriptors; action dispatch 0xC1FB referenced in asm)
 - [x] Inputs/signal-state init — `application/inputs.c` (`Inputs_Init` 0xB84D)
-- [~] Reset logging + flash self-test — `application/selftest.c` (`Outputs_Init` 0xBC54 = reset-cause counters + variant select; `Outputs_Task` 0xBCB1 = incremental flash CRC, walk referenced in asm). NOTE: auto-label 'Outputs_*' is a misnomer; real purpose documented.
-- [~] Controller — `application/motor_control.c` (`Ctrl_Init` 0xA12E, `Ctrl_Start` 0xA1E6, `Ctrl_Task` 0xA256, `Ctrl_SlowTask` 0xA694; inner PI/ramp math referenced in asm)
-- [~] Motor driver — `application/motor_control.c` (`Motor_Init` 0xA99E, `Motor_Task` 0xA9A9 command->level decision tree)
-- [~] Motor position / commutation — `application/motor_control.c` (`MotorPos_Init` 0xA6F9, `MotorPos_Isr` 0xA719, `MotorPos_Task` 0xA5B5)
+- [x] Reset logging + flash self-test — `application/selftest.c` (`Outputs_Init` 0xBC54 reset-cause counters; `Outputs_Task`/`FlashSelfTest_Step` 0xBCB1 incremental XOR-16 flash check vs 0xCAFE). NOTE: auto-label 'Outputs_*' is a misnomer.
+- [x] Backlight dimming state machine (DEVICE) — `application/motor_control.c` (`Ctrl_Init`, `Ctrl_Start`, `Ctrl_Task`/`Ctrl_Step` 0xA256 12-state map + brightness ramp; inner per-state bodies referenced in asm)
+- [x] Button/output driver (DEVICE) — `application/motor_control.c` (`Motor_Init`, `Motor_Task` level decision tree)
+- [x] Button-ladder/scroll + backlight PWM tick (DEVICE) — `application/motor_control.c` (`MotorPos_Init`, `MotorPos_Isr` 0xA719, `MotorPos_Task`)
 - [x] ADC analogue front-end — `application/sensor.c` (`Sensor_Init` 0xA0E6)
-- [~] Heater control — `application/heater.c` (`Heater_Init` 0xB7D9, `Heater_Task` 0xB7E8; open/short detect, slew-limited)
-- [~] Diagnostics / output test — `application/diag.c` (`Diag_Init` 0xB5A3, `Diag_Task` 0xB4D7, `Diag_SlowTask` 0xB5AA)
+- [x] Aux analogue input (DEVICE) — `application/heater.c` (`Heater_Init`, `Heater_Task`; open/short detect, slew-limited; `Heater_Drive` table interpolation referenced in asm)
+- [x] Diagnostics / output test — `application/diag.c` (`Diag_Init`, `Diag_Task`, `Diag_SlowTask`)
 - [x] Publish-signal state — `application/signals.c` (`LinSignals_Init`, `LinSignals_Refresh`, `Signals_Task` 0xAE36 age counters)
 
 ## Bootloader

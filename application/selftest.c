@@ -22,6 +22,8 @@
  */
 #include "app.h"
 
+#define R8(a)  (*(volatile byte *)(a))
+
 /* reset-status bits (SRS) */
 #define SRS_POR_BIT   0x80
 #define SRS_COP_BIT   0x40
@@ -103,9 +105,40 @@ void Outputs_Task(void)
  * ====================================================================== */
 static void FlashSelfTest_Step(void)
 {
-    /* Incremental; the walk and the final 0xCAFE comparison are documented
-     * in the asm.  Kept as a reference step so the control flow of
-     * Outputs_Task is clear without inlining the block arithmetic. */
+    /* Incremental XOR-16 checksum over the application flash.  The 16-bit
+     * block pointer is 0x010C:0x010D; each step XORs one 32-byte block
+     * (based at ~0x8602) into the running sum 0x010F:0x0110 until block
+     * 0x036D, then compares the sum with 0xCAFE: equal clears the "image
+     * corrupt" bit, otherwise sets g_linAppFlags bit4.  (Pointer arithmetic
+     * reference/application.asm 0xBCCD-0xBD7C.) */
+    word block = (word)((R8(0x010C) << 8) | R8(0x010D));
+
+    if (block >= 0x036D) {                       /* scan complete */
+        word sum = (word)((R8(0x010F) << 8) | R8(0x0110));
+        if (sum == 0xCAFE) {
+            g_linAppFlags &= (byte)~0x10;        /* image OK */
+        } else {
+            g_linAppFlags |= 0x10;               /* image corrupt */
+        }
+        R8(0x010C) = 0; R8(0x010D) = 0;          /* restart the scan */
+        R8(0x010E) = 0; R8(0x010F) = 0; R8(0x0110) = 0;
+        return;
+    }
+
+    /* XOR one 32-byte block of flash into the running checksum */
+    {
+        const volatile byte *p = (const volatile byte *)(word)(0x8602 + block * 32);
+        word sum = (word)((R8(0x010F) << 8) | R8(0x0110));
+        byte i;
+        for (i = 0; i < 32; i += 2) {
+            sum ^= (word)((p[i] << 8) | p[i + 1]);
+        }
+        R8(0x010F) = (byte)(sum >> 8);
+        R8(0x0110) = (byte)sum;
+        block++;
+        R8(0x010C) = (byte)(block >> 8);
+        R8(0x010D) = (byte)block;
+    }
 }
 
 /* ======================================================================
