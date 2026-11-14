@@ -253,3 +253,62 @@ byte Motor_sub_A957(void)
     R8(0x0242) = b;
     return b;
 }
+
+/* Motor_sub_A8B6 [0xA8B6] - motor drive self-test.
+ * Briefly energises the bridge, measures motor current (ADC ch 0x0A) and
+ * feedback (ch 2) and checks the current/feedback ratio against a minimum
+ * (0x12).  A ratio below the threshold (or no feedback) is a fault: it
+ * clears 0x0240 bit0 and returns 0.  Always stops the drive (Motor_sub_A874)
+ * before returning. */
+byte Motor_sub_A8B6(void)
+{
+    byte current, ok = 1;
+
+    R8(0x0008) |= 0x04;                 /* bridge enable */
+    R8(0x000A) &= (byte)~0x10;
+    current = Adc_Read(0x0A);
+    Delay_Loop(0xF0);
+    R8(0x0241) = Adc_Read(0x02);        /* feedback */
+    R8(0x0240) |= 0x01;
+
+    if (R8(0x0241) != 0) {
+        /* ratio = (current scaled) / feedback; fault if < 0x12 */
+        word ratio = div16((word)((word)current << 3), R8(0x0241));
+        if ((int)(ratio - 0x12) < 0) {
+            R8(0x0240) &= (byte)~0x01;
+            ok = 0;
+        }
+    }
+    Motor_sub_A874();                   /* stop the drive */
+    return ok;
+}
+
+/* ======================================================================
+ * Motor_Ramp  [0xB667]   slew-rate limiter
+ * Moves a value toward a target by at most 'step' per call.  Parameter
+ * block (on the stack in the original): current value, target, step and a
+ * "still moving" flag pointer.  When step == 0, or the target is already
+ * reached, it snaps to the target and clears the moving flag; otherwise it
+ * adds/subtracts 'step' (clamped so it does not overshoot) and leaves the
+ * flag set.  Used to filter the supply voltage and to ramp the heater /
+ * motor outputs.  (Exact signed arithmetic: reference/application.asm
+ * 0xB667-0xB706.)
+ * ====================================================================== */
+byte Motor_Ramp(byte step, byte *flag, byte current, byte target)
+{
+    int delta;
+
+    if (step == 0 || current == target) {
+        if (flag) *flag = 0;            /* reached / no limiting */
+        return target;
+    }
+    delta = (int)target - (int)current;
+    if (delta > 0) {
+        current = (byte)(current + ((delta <= step) ? delta : step));
+    } else {
+        delta = -delta;
+        current = (byte)(current - ((delta <= step) ? delta : step));
+    }
+    if (flag) *flag = (byte)(current != target);
+    return current;
+}

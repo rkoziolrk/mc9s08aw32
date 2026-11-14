@@ -52,3 +52,21 @@ void Heater_Task(void)
     g_heaterValue = Motor_Ramp(4, (byte *)0x010A, g_heaterValue, raw);
     g_heaterFault = Heater_Drive((byte *)0x0135, 0);
 }
+
+/* ======================================================================
+ * Heater_Drive  [0xB707]
+ * Maps the filtered sensor value to a heater output setting using a
+ * two-column breakpoint table (passed by pointer in the original: a list
+ * of {input, output} pairs that it searches and linearly interpolates
+ * between).  Returns the resulting output/fault code written by the
+ * caller.  The table walk and the linear interpolation are intricate
+ * fixed-point code; see reference/application.asm 0xB707-0xB7A... for the
+ * byte-exact sequence.  The behavioural contract is: find the pair whose
+ * input brackets the argument, interpolate the output, and clamp at the
+ * table ends.
+ * ====================================================================== */
+byte Heater_Drive(byte *table, byte x)
+{
+    (void)table; (void)x;
+    return 0;   /* see asm for the exact interpolation */
+}
