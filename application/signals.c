@@ -63,3 +63,33 @@ void LinSignals_Refresh(void)
     /* remaining mapping (0x0260/0x0261 etc.) continues in
      * reference/application.asm 0xAD07-0xAD35. */
 }
+
+/* ======================================================================
+ * Signals_Task  [0xAE36]   (called from the 25-tick task)
+ * Maintains the "time since event" counters attached to the published
+ * status signals: some count down to zero (0x0267, 0x026B) and some count
+ * up with saturation at 0xFFFF (0x0268, 0x026C, and 0x025C/0x025E when
+ * FEAT_BIT0 is set).  These counters time the LIN status/age signals.
+ * The full set continues in reference/application.asm 0xAE36-0xAF20.
+ * ====================================================================== */
+void Signals_Task(void)
+{
+    word v;
+
+    if (R8(0x0267) != 0) R8(0x0267)--;          /* down-counter */
+    if (R8(0x026B) != 0) R8(0x026B)--;
+
+    v = (word)(((word)R8(0x0268) << 8) + R8(0x0269));   /* up, saturating */
+    if (v != 0 && v < 0xFFFF) { v++; R8(0x0268) = (byte)(v >> 8); R8(0x0269) = (byte)v; }
+
+    v = (word)(((word)R8(0x026C) << 8) + R8(0x026D));
+    if (v != 0 && v < 0xFFFF) { v++; R8(0x026C) = (byte)(v >> 8); R8(0x026D) = (byte)v; }
+
+    if (g_featureFlags & FEAT_BIT0) {
+        v = (word)(((word)R8(0x025C) << 8) + R8(0x025D));
+        if (v != 0 && v < 0xFFFF) { v++; R8(0x025C) = (byte)(v >> 8); R8(0x025D) = (byte)v; }
+        v = (word)(((word)R8(0x025E) << 8) + R8(0x025F));
+        if (v != 0 && v < 0xFFFF) { v++; R8(0x025E) = (byte)(v >> 8); R8(0x025F) = (byte)v; }
+    }
+    /* remaining counters: see reference/application.asm 0xAE8B-0xAF20. */
+}

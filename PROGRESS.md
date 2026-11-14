@@ -30,21 +30,28 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [~] Fault handling — `application/fault.c` (`Fault_Init` 0xAA10, `Fault_Task` 0xAA36, `Fault_Report` 0xAA0C; descriptor-table read + action dispatch referenced in asm)
 - [x] Inputs/signal-state init — `application/inputs.c` (`Inputs_Init` 0xB84D)
 - [~] Reset logging + flash self-test — `application/selftest.c` (`Outputs_Init` 0xBC54 = reset-cause counters + variant select; `Outputs_Task` 0xBCB1 = incremental flash CRC, walk referenced in asm). NOTE: auto-label 'Outputs_*' is a misnomer; real purpose documented.
-- [ ] Controller — `Ctrl_Init` 0xA12E, `Ctrl_Start` 0xA1E6, `Ctrl_Task` 0xA256, `Ctrl_SlowTask` 0xA694
-- [ ] Motor driver — `Motor_Init` 0xA99E, `Motor_Task` 0xA9A9
-- [ ] Motor position / commutation — `MotorPos_Init` 0xA6F9, `MotorPos_Isr` 0xA719, `MotorPos_Task` 0xA5B5
+- [~] Controller — `application/motor_control.c` (`Ctrl_Init` 0xA12E, `Ctrl_Start` 0xA1E6, `Ctrl_Task` 0xA256, `Ctrl_SlowTask` 0xA694; inner PI/ramp math referenced in asm)
+- [~] Motor driver — `application/motor_control.c` (`Motor_Init` 0xA99E, `Motor_Task` 0xA9A9 command->level decision tree)
+- [~] Motor position / commutation — `application/motor_control.c` (`MotorPos_Init` 0xA6F9, `MotorPos_Isr` 0xA719, `MotorPos_Task` 0xA5B5)
 - [x] ADC analogue front-end — `application/sensor.c` (`Sensor_Init` 0xA0E6)
 - [~] Heater control — `application/heater.c` (`Heater_Init` 0xB7D9, `Heater_Task` 0xB7E8; open/short detect, slew-limited)
 - [~] Diagnostics / output test — `application/diag.c` (`Diag_Init` 0xB5A3, `Diag_Task` 0xB4D7, `Diag_SlowTask` 0xB5AA)
-- [~] Publish-signal mapping — `application/signals.c` (`LinSignals_Init` 0xAC81, `LinSignals_Refresh` 0xACB7; `Signals_Task` 0xAE36 still reference-only)
+- [~] Publish-signal mapping — `application/signals.c` (`LinSignals_Init` 0xAC81, `LinSignals_Refresh` 0xACB7; `Signals_Task` 0xAE36 in signals.c)
 
 ## Bootloader
 - [ ] Reset/launch + download protocol + RAM flash routines — `reference/bootloader.asm`,
       `bootloader/bootloader_notes.md` (intentionally kept as annotated asm;
       RAM-resident flash code cannot be guaranteed byte-identical from C).
 
-## Planned order
-Supply → Fault → Inputs/Outputs → LIN transport/diag/signal layers → Control/Motor.
+## Status
+All application modules now have a C file (top-level logic + hardware access
+reconstructed; the intricate inner math of the control loop, the LIN byte-level
+framing and several table-driven helpers are cross-referenced to
+`reference/application.asm`, which remains the byte-exact ground truth).
+The bootloader stays as annotated asm by design.
+
+Helper routines still only in asm: Motor_sub_A874/A88F/A8B6/A91B/A957,
+Heater_Drive 0xB707, Adc_sub_BEB7 0xBEB7, the mem/mul/div compiler helpers.
 
 ## How to resume in a fresh session
 1. Clone this repo; the original firmware is in `firmware/`.
