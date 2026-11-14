@@ -20,7 +20,7 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] LIN byte RX/TX engines — `application/lin.c` (`Lin_RxByte` 0x9D62 full state machine: publish/diag/checksum; `Lin_TxByteOrErr` 0x9E75 BREAK/error handler with re-arm)
 - [x] LIN transport timers + CRC — `application/lin.c` `LinTp_Timer` 0x9C31 (N_As/N_Cr + wakeup break) and `lin_transport.c` `LinCrc_Fold` 0x9D44. ISO-TP SF/FF/CF assembler `LinTp_RxFrame`/`TxFrame` dispatch reconstructed; inner frame assembly referenced in asm.
 - [x] LIN diagnostic + schedule — `application/lin_transport.c` (`LinSched_OnHeader` 0x99EC, `LinDiag_Request` 0x9CDE, `LinDiag_Response` 0x9AB6, `LinErr_Report` 0x9BA1 — full, with the flash frame tables C1A2/C1AB/C1AF/C1B5/C1B7/C1C*/C1CB)
-- [~] LIN signal mapping — `application/lin_signals.c` (`LinApp_Reset` 0x8E10, `LinApp_DecodeCommand` 0x8E35 with full command bit layout, `LinApp_Supervise` 0x8E8B, `LinApp_CountIdle` 0x8EC7; `LinSig_BuildStatus` 0x8F6C and `LinSig_PublishAll` 0x9950/0x998B publish tables referenced in asm)
+- [x] LIN signal mapping — `application/lin_signals.c` (`LinApp_Reset`, `LinApp_DecodeCommand` full bit layout, `LinApp_Supervise`, `LinApp_CountIdle`, `LinSig_PublishAll`/`PublishAll2` 0x9950/0x998B full; `LinSig_BuildStatus` 0x8F6C counters + documented per-bit map)
 - [x] ADC read + hardware variant/feature detection + strap coding — `application/adc.c`
 - [x] Flash dual-bank configuration store — `application/nvm.c`
 - [x] GPIO config + global critical sections — `application/ports.c`
@@ -36,7 +36,7 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] ADC analogue front-end — `application/sensor.c` (`Sensor_Init` 0xA0E6)
 - [~] Heater control — `application/heater.c` (`Heater_Init` 0xB7D9, `Heater_Task` 0xB7E8; open/short detect, slew-limited)
 - [~] Diagnostics / output test — `application/diag.c` (`Diag_Init` 0xB5A3, `Diag_Task` 0xB4D7, `Diag_SlowTask` 0xB5AA)
-- [~] Publish-signal mapping — `application/signals.c` (`LinSignals_Init` 0xAC81, `LinSignals_Refresh` 0xACB7; `Signals_Task` 0xAE36 in signals.c)
+- [x] Publish-signal state — `application/signals.c` (`LinSignals_Init`, `LinSignals_Refresh`, `Signals_Task` 0xAE36 age counters)
 
 ## Bootloader
 - [~] Bootloader — `bootloader/bootloader.c` (reset/launch, command loop, clock/SCI init, polled SCI FIFOs, CRC, software timer; reflash frame handlers fully reconstructed in `bootloader/reflash.c`, wire format in `bootloader/protocol.md`, byte-exact framing in `reference/bootloader.asm`)

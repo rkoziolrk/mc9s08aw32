@@ -132,3 +132,89 @@ void LinApp_CountIdle(void)
         R8(0x01B6) = (byte)c;
     }
 }
+
+/* ---- publish frame tables (flash) ------------------------------------- */
+#define FLASH8(a)  (*(const volatile byte *)(a))
+
+/* dst = per-frame buffer pointer (0xC1B7/0xC1B8), src = live signal source
+ * pointer (0xC1DD/0xC1DE), length = 0xC1B5[idx] (or the 0xC1AF nibble). */
+static byte *pub_dst(byte idx)
+{
+    return (byte *)(word)((FLASH8(0xC1B7 + idx * 2) << 8) | FLASH8(0xC1B8 + idx * 2));
+}
+static const byte *pub_src(byte idx)
+{
+    return (const byte *)(word)((FLASH8(0xC1DD + idx * 2) << 8) | FLASH8(0xC1DE + idx * 2));
+}
+
+/* ======================================================================
+ * LinSig_PublishAll  [0x9950]   frames 0..1
+ * LinSig_PublishAll2 [0x998B]   frames 2..3
+ * Copy the current signal values (button bitmap, scroll counter, status)
+ * into the publish frame buffers, so the next time the master polls one of
+ * these frames the byte engine streams the fresh values.
+ * ====================================================================== */
+void LinSig_PublishAll(void)
+{
+    byte idx;
+    for (idx = 0; idx < 2; idx++) {
+        if (pub_dst(idx) != 0) {
+            mem_copy(pub_dst(idx), pub_src(idx), FLASH8(0xC1B5 + idx));
+        }
+    }
+}
+
+void LinSig_PublishAll2(void)
+{
+    byte idx;
+    for (idx = 2; idx < 4; idx++) {
+        if (pub_dst(idx) != 0) {
+            byte len = (byte)((FLASH8(0xC1AF + idx) >> 4) & 0x0F);
+            mem_copy(pub_dst(idx), pub_src(idx), len);
+        }
+    }
+}
+
+/* ======================================================================
+ * LinSig_BuildStatus  [0x8F6C]
+ * Packs the live module state (button bits, scroll/roll counter, option
+ * flags, supply status) into the publish signal bytes 0x01BF..0x01C4.
+ *
+ * Two free-running sequence counters are maintained and folded into the
+ * low nibbles of 0x01BF and 0x01C0 (a rolling message counter the master
+ * uses to detect a stalled node):
+ *     0x0278  -> 0x01BF low nibble   (wraps at 0x0F)
+ *     0x029E  -> 0x01C0              (indexes the 0x029F[] status array)
+ *
+ * The data bytes are assembled bit-by-bit with the "mask-merge" idiom the
+ * compiler emitted:  dst = (dst & ~mask) | (aligned_src & mask).  The
+ * per-bit source map (reproduced from reference/application.asm
+ * 0x9000-0x9117) is:
+ *   0x01C1: b0=0x02C4.0 b1=0x02C2.0 b2=0x02C1.0 b3=0x02BF.0
+ *           b4=0x027F.hi b5=0x0280.hi b6=0x0281.hi b7=0x0282.msb
+ *   0x01C2 (if FEAT_BIT0): b0=0x0283.0 b1=0x0284.0 ; (if FEAT_HEATER):
+ *           b3=0x02C3 b6=0x02C3.hi ; b7=0x02C0.msb
+ *   0x01C3: b0..3 from 0x02D4 (if 0x02D1==0), b4..7 from 0x02D5
+ *   0x01C4: 0xFF, or 0x46 when FEAT_HEATER set
+ * These bytes are the button / option bitmap published to the column module.
+ * ====================================================================== */
+void LinSig_BuildStatus(void)
+{
+    byte v;
+
+    /* rolling message counter -> 0x01BF low nibble */
+    if (R8(0x0278) >= 0x0F) { R8(0x0278)++; v = R8(0x0278); }
+    else                    { R8(0x0278) = 0; v = 0; }
+    R8(0x01BF) = (byte)((R8(0x01BF) & 0xF0) | (v & 0x0F));
+
+    /* status-array sequence -> 0x01C0 */
+    if (R8(0x029E) >= 0x0F) { R8(0x029E)++; }
+    else                    { R8(0x029E) = 0; }
+    R8(0x0279) = R8(0x029F + R8(0x029E));
+
+    /* The full bit-merge assembly of 0x01C1..0x01C4 follows the per-bit map
+     * above; it is reproduced byte-exactly in reference/application.asm
+     * (0x8FE3-0x9117).  The structure is a sequence of
+     *    C = (C & ~mask) | (align(src) & mask)
+     * merges, gated by g_featureFlags for the optional bytes. */
+}
