@@ -1,4 +1,6 @@
 /*
+ * DEVICE NOTE: not a cabin heater -- an auxiliary analogue input (ch 3)
+ * with open/short detection on this steering-wheel module. See DEVICE.md.
  * heater.c - Heater / PTC temperature control
  *            (decompiled from Heater_Init 0xB7D9 and Heater_Task 0xB7E8).
  *

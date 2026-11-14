@@ -1,4 +1,6 @@
 /*
+ * DEVICE NOTE: 'variant detection' here is the STEERING-WHEEL CODING (which
+ * button set is fitted); Adc_Read(ch 2) reads the BUTTON RESISTOR LADDER.
  * adc.c - ADC driver and hardware-variant detection
  *         (decompiled from 0xA103, 0xBEC2-0xBFA6 and 0xBFA7-0xC047).
  *

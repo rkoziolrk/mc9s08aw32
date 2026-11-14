@@ -2,9 +2,12 @@
 
 Reverse-engineered C reconstruction of the firmware in
 `2b5a8580-aw32.s19` (an S19 image for a Freescale/NXP **MC9S08AW32**
-8-bit HCS08 microcontroller — the "S909AW32" part). The device is a
-**LIN-bus slave node** (motor/output control module) with an in-system
-**LIN bootloader** for field reprogramming.
+8-bit HCS08 microcontroller — the "S909AW32" part). The device is the **multifunction steering-wheel button panel of an Audi
+A4 B8** — a **LIN-bus slave** that scans the wheel buttons, the scroll/roll
+wheel and drives the button backlighting, with an in-system **LIN
+bootloader** for field reprogramming. See `DEVICE.md` for the functional map
+(several reverse-engineering symbol names are thematic placeholders —
+`DEVICE.md` maps them to their real meaning).
 
 > **Scope & honesty note.** This is ~18 KB of hand-written/compiled HCS08
 > machine code, about 230 routines. The modules that matter most here —

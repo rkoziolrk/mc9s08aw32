@@ -1,4 +1,7 @@
 /*
+ * DEVICE NOTE: the 'command' signals received here are the BACKLIGHT
+ * DIMMING LEVEL/enable from the bus; the published signals are BUTTON
+ * states + SCROLL counter. See DEVICE.md.
  * lin_signals.c - LIN signal mapping (application layer)
  *                 (decompiled from 0x8E10, 0x8E35, 0x8E8B, 0x8EC7,
  *                  0x8EDA, 0x8F18, 0x8F6C and 0x911E).

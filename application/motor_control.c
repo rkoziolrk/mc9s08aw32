@@ -1,4 +1,9 @@
 /*
+ * DEVICE NOTE: this is NOT a motor controller. Per DEVICE.md the real
+ * device is the Audi A4 B8 steering-wheel button panel; the Ctrl_/Motor_/
+ * MotorPos_ names are placeholders for BUTTON scanning (analogue resistor
+ * ladder), the SCROLL/roll wheel, and BACKLIGHT PWM dimming. Structure and
+ * hardware access are correct; only the names' theme is off.
  * motor_control.c - Motor driver, closed-loop position controller and
  *                   the commutation / position ISR.
  *                   (decompiled from 0xA12E, 0xA1E6, 0xA256, 0xA694,
