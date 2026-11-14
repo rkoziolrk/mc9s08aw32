@@ -194,3 +194,62 @@ INTERRUPT void MotorPos_Isr(void)
 void MotorPos_Task(void)
 {
 }
+
+/* ======================================================================
+ * Device helper routines (previously referenced; now reconstructed).
+ * ====================================================================== */
+
+/* Motor_sub_A874 [0xA874] - stop the H-bridge drive and clear the move. */
+void Motor_sub_A874(void)
+{
+    R8(0x0245) = 0;                 /* clear "moving" flag        */
+    R8(0x0008) &= (byte)~0x04;      /* bridge enable pin low      */
+    R8(0x000A) &= (byte)~0x10;      /* PWM/control pin low        */
+    R8(0x023F) = 1;
+    R8(0x029A) = 1;
+}
+
+/* Motor_sub_A88F [0xA88F] - clear the end-stop/limit state. */
+byte Motor_sub_A88F(void)
+{
+    R8(0x0240) = 0;
+    return 0;
+}
+
+/* Motor_sub_A91B [0xA91B] - stall / over-current check.
+ * Reads motor current (ADC ch 0x0A) and feedback (ch 2); if current/feedback
+ * >= 7 it flags a stall (0x0240 bit2) and returns 0, otherwise returns 1. */
+byte Motor_sub_A91B(void)
+{
+    byte current  = Adc_Read(0x0A);
+    byte feedback = Adc_Read(0x02);
+
+    R8(0x0240) &= (byte)~0x05;
+    if (feedback != 0) {
+        if ((byte)(current / feedback) >= 0x07) {
+            R8(0x0240) |= 0x04;         /* stall / over-current */
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Motor_sub_A957 [0xA957] - sample the end-stop reference level.
+ * Reads the feedback channel (ch 2) three times with delays and stores the
+ * running maximum in 0x0242 (the end-stop threshold). */
+byte Motor_sub_A957(void)
+{
+    byte a, b;
+    R8(0x0105) = Adc_Read(0x02);
+    Delay_Loop(R8(0x0170));
+    R8(0x0106) = Adc_Read(0x02);
+    Delay_Loop(R8(0x0171));
+    a = R8(0x0105); b = R8(0x0106);
+    if (a > b) b = a;
+    R8(0x0106) = b;
+    a = Adc_Read(0x02);
+    R8(0x0105) = a;
+    if (a > b) b = a;
+    R8(0x0242) = b;
+    return b;
+}

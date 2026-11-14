@@ -107,3 +107,13 @@ static void FlashSelfTest_Step(void)
      * in the asm.  Kept as a reference step so the control flow of
      * Outputs_Task is clear without inlining the block arithmetic. */
 }
+
+/* ======================================================================
+ * Adc_sub_BEB7  [0xBEB7] - output calibration: clear the controller-init
+ * flag and reload the ICG trim from the NV trim byte (NVICGTRM, 0xFFBE).
+ * ====================================================================== */
+void Adc_sub_BEB7(void)
+{
+    *(volatile byte *)0x026F = 0;
+    ICGTRM = NVICGTRM;
+}

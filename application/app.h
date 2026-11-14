@@ -167,6 +167,15 @@ void Outputs_Init(void); void Outputs_Task(void);
 void Inputs_Init(void); void Supply_Init(void); void Supply_Task(void);
 extern byte g_resetStatus;   /* [0x010B] selftest.c */
 extern byte g_ctrlErrFlag;   /* [0x0276] lin_signals.c */
+extern volatile byte g_mulDiv_tmp;  /* [0x00C6] runtime.c */
+
+/* runtime.c compiler helpers */
+void mem_set(byte *dst, word count);
+void mem_copy(byte *dst, const byte *src, word count);
+word negx(word value);
+word mul16(word a, word b);
+word div16(word dividend, word divisor);
+int  sdiv16(int dividend, int divisor);
 extern byte g_supplyDebounce, g_supplyLatched, g_tempCode, g_tempValue;  /* supply.c */
 void Heater_Init(void); void Heater_Task(void);
 void Diag_Init(void);  void Diag_Task(void);   void Diag_SlowTask(void);

@@ -48,8 +48,11 @@ framing and several table-driven helpers are cross-referenced to
 `reference/application.asm`, which remains the byte-exact ground truth).
 The bootloader stays as annotated asm by design.
 
-Helper routines still only in asm: Motor_sub_A874/A88F/A8B6/A91B/A957,
-Heater_Drive 0xB707, Adc_sub_BEB7 0xBEB7, the mem/mul/div compiler helpers.
+Helper routines reconstructed: compiler runtime (mem/mul/div/negate) in
+`application/runtime.c`; device helpers Motor_sub_A874/A88F/A91B/A957 in
+`motor_control.c`, Adc_sub_BEB7 in `selftest.c`.
+Still referenced to asm: Motor_Ramp 0xB667 (slew limiter), Motor_sub_A8B6
+0xA8B6 (self-test), Heater_Drive 0xB707 (table interpolation).
 
 ## How to resume in a fresh session
 1. Clone this repo; the original firmware is in `firmware/`.
