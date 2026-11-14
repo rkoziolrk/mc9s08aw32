@@ -91,3 +91,8 @@ Key point: the image contains **no flash-programming code** (no FSTAT/FCMD
 writes). The host downloads the flash driver into RAM at 0x01A0, the
 bootloader CRC-checks it and then runs it with `jsr $01A0`. The byte-exact
 protocol framing stays in `../reference/bootloader.asm`.
+
+## Exact wire protocol
+
+The byte-by-byte frame format of every command (handshake, command table,
+field sizes, the reflash session) is written out in [`protocol.md`](protocol.md).
