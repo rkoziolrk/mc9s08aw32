@@ -11,6 +11,7 @@
 # which is the compiler the original firmware was built with.
 
 APP_SRC := $(wildcard application/*.c)
+BOOT_SRC := $(wildcard bootloader/*.c)
 INC     := -Icommon -Iapplication
 
 .PHONY: check sdcc clean
@@ -20,7 +21,12 @@ check:
 	  gcc -DAW32_HOSTCHECK $(INC) -std=c99 -fsyntax-only -Wall \
 	      -Wno-unused-variable -Wno-main $$f || exit 1; \
 	done
-	@echo "all application sources are well-formed C"
+	@for f in $(BOOT_SRC); do \
+	  echo "checking $$f"; \
+	  gcc -DAW32_HOSTCHECK -Icommon -std=c99 -fsyntax-only -Wall \
+	      -Wno-unused-variable -Wno-unused-function -Wno-int-to-pointer-cast -Wno-main $$f || exit 1; \
+	done
+	@echo "all sources are well-formed C"
 
 sdcc:
 	@mkdir -p build

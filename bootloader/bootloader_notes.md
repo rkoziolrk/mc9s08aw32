@@ -69,3 +69,25 @@ bootloader is small, security-relevant (it can reprogram the device) and
 timing-critical (its flash routines execute from RAM), it is provided as
 annotated assembly rather than reconstructed C — a C rebuild could not be
 guaranteed to reproduce the exact RAM-resident code bytes.
+
+## C reconstruction
+
+A structural C reconstruction is now in [`bootloader.c`](bootloader.c): the
+reset/launch logic, the resident command loop, clock/SCI init, the polled
+SCI software FIFOs, the CRC and the software time base, plus documented
+handlers for the reflash protocol.
+
+Name corrections (the auto-generated labels in `../reference/bootloader.asm`
+are misleading):
+
+| asm label | address | what it really is |
+|-----------|---------|-------------------|
+| `Boot_FlashErase`   | 0xFBAD | ICG **clock** init (FEI, trim) |
+| `Boot_FlashProgram` | 0xF759 | a byte **memcpy** (stages the download) |
+| `Boot_CopFeed`      | 0xFD33 | TPM2-based **software timer** tick |
+| `Boot_Delay`        | 0xFD76 | signed **±127 range test** |
+
+Key point: the image contains **no flash-programming code** (no FSTAT/FCMD
+writes). The host downloads the flash driver into RAM at 0x01A0, the
+bootloader CRC-checks it and then runs it with `jsr $01A0`. The byte-exact
+protocol framing stays in `../reference/bootloader.asm`.

@@ -39,9 +39,7 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [~] Publish-signal mapping — `application/signals.c` (`LinSignals_Init` 0xAC81, `LinSignals_Refresh` 0xACB7; `Signals_Task` 0xAE36 in signals.c)
 
 ## Bootloader
-- [ ] Reset/launch + download protocol + RAM flash routines — `reference/bootloader.asm`,
-      `bootloader/bootloader_notes.md` (intentionally kept as annotated asm;
-      RAM-resident flash code cannot be guaranteed byte-identical from C).
+- [~] Bootloader — `bootloader/bootloader.c` (reset/launch, command loop, clock/SCI init, polled SCI FIFOs, CRC, software timer; reflash frame handlers + RAM-resident flash driver `jsr $01A0` documented, byte-exact framing in `reference/bootloader.asm`)
 
 ## Status
 All application modules now have a C file (top-level logic + hardware access
