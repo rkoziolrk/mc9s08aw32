@@ -33,10 +33,10 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [ ] Controller — `Ctrl_Init` 0xA12E, `Ctrl_Start` 0xA1E6, `Ctrl_Task` 0xA256, `Ctrl_SlowTask` 0xA694
 - [ ] Motor driver — `Motor_Init` 0xA99E, `Motor_Task` 0xA9A9
 - [ ] Motor position / commutation — `MotorPos_Init` 0xA6F9, `MotorPos_Isr` 0xA719, `MotorPos_Task` 0xA5B5
-- [ ] Sensor input — `Sensor_Init` 0xA0E6
-- [ ] Heater — `Heater_Init` 0xB7D9, `Heater_Task` 0xB7E8
-- [ ] Diagnostics — `Diag_Init` 0xB5A3, `Diag_Task` 0xB4D7, `Diag_SlowTask` 0xB5AA
-- [ ] Signals mapping — `Signals_Task` 0xAE36, `LinSignals_Init` 0xAC81, `LinSignals_Refresh` 0xACB7
+- [x] ADC analogue front-end — `application/sensor.c` (`Sensor_Init` 0xA0E6)
+- [~] Heater control — `application/heater.c` (`Heater_Init` 0xB7D9, `Heater_Task` 0xB7E8; open/short detect, slew-limited)
+- [~] Diagnostics / output test — `application/diag.c` (`Diag_Init` 0xB5A3, `Diag_Task` 0xB4D7, `Diag_SlowTask` 0xB5AA)
+- [~] Publish-signal mapping — `application/signals.c` (`LinSignals_Init` 0xAC81, `LinSignals_Refresh` 0xACB7; `Signals_Task` 0xAE36 still reference-only)
 
 ## Bootloader
 - [ ] Reset/launch + download protocol + RAM flash routines — `reference/bootloader.asm`,
