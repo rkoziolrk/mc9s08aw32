@@ -48,6 +48,18 @@
 typedef byte (*BootCmd)(void);      /* a protocol frame handler            */
 typedef void (*RamRoutine)(void);   /* the downloaded flash driver         */
 
+/* The reflash command handlers (full reconstruction in reflash.c). */
+extern byte Cmd_E(void), Cmd_I(void), Cmd_D(void), Cmd_F(void), Cmd_Q(void);
+extern byte Cmd_R(void), Cmd_C(void), Cmd_V(void), Cmd_W(void), Cmd_L(void);
+
+/* Command table (ROM copy at 0xFE38, mirrored to RAM 0x01F6 at startup). */
+struct BootCmdEntry { byte id; BootCmd handler; };
+static const struct BootCmdEntry s_cmdTable[] = {
+    { 'E', Cmd_E }, { 'I', Cmd_I }, { 'D', Cmd_D }, { 'F', Cmd_F },
+    { 'Q', Cmd_Q }, { 'R', Cmd_R }, { 'C', Cmd_C }, { 'V', Cmd_V },
+    { 'W', Cmd_W }, { 'L', Cmd_L }, { 0x00, 0 }
+};
+
 /* forward decls for the primitives */
 static void Boot_StartupCopy(void);
 static void Boot_Init(void);
@@ -131,10 +143,24 @@ void Boot_Main(void)
     FCDIV = 0x37;                                /* flash clock divider */
 
     for (;;) {
+        byte id;
+        const struct BootCmdEntry *cmd = 0;
+
         Boot_TimeTick();                         /* [0xFD33] */
-        (void)Boot_SciPump();                    /* [0xFC10] */
-        /* frame-id match against the RAM command table at 0x01F6 and
-         * dispatch of the handler pointer; see asm 0xF6F4-0xF739. */
+        id = Boot_SciPump();                     /* [0xFC10] next received byte */
+
+        /* match the received id against the command table (0x01F6/0xFE38) */
+        {
+            const struct BootCmdEntry *e;
+            for (e = s_cmdTable; e->id != 0; e++) {
+                if (e->id == id) { cmd = e; R8(0x0218) = 0; break; }
+            }
+        }
+        /* drive the selected handler until it signals completion (returns 0);
+         * it is re-entered once per received byte via this loop. */
+        if (cmd != 0) {
+            (void)cmd->handler();
+        }
     }
 }
 

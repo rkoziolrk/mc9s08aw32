@@ -208,9 +208,9 @@ After reprogramming, a reset with a valid application vector at 0xF3FE
 * `Boot_SciPutHex` (0xFCC4) despite its label sends **raw bytes** from a
   buffer into the TX FIFO (not ASCII hex); `Boot_SciPutc` (0xFC67) enqueues
   a byte block the same way.
-* The byte-exact state transitions (which offsets, which echo bytes) are in
-  `reference/bootloader.asm` at each handler address listed above; this
-  document captures the field sizes and the semantics.
+* Every handler is fully reconstructed as C in [`reflash.c`](reflash.c)
+  (`Cmd_E/I/D/F/Q/R/C/V/W/L`); this document captures the field sizes and
+  semantics, and `reference/bootloader.asm` remains the byte-exact source.
 * The scheme is deliberately safe: because the erase/program code only ever
   exists in RAM (downloaded, CRC-checked, then `jsr 0x01A0`), a failed
   download cannot corrupt the resident bootloader.
