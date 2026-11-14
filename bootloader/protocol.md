@@ -112,70 +112,77 @@ expects to receive. Offsets are into the 0x021A frame buffer.
 (The handler first stages the 22 bytes into 0x021A via `Boot_MemCopy` and
 patches in `SDIDH` from the chip, then streams them out.)
 
+> Direction legend (verified against the SCI primitives): the handlers use
+> **Boot_SciRecv** (asm "Boot_SciPutHex", 0xFCC4 — reads the RX FIFO) and
+> **Boot_SciSend** (asm "Boot_SciPutc", 0xFC67 — writes the TX FIFO).
+> `<- host` = bootloader **receives**; `-> host` = bootloader **sends**.
+
 ### `D` — Download routine (0xF832)  and  `F` — Download big block (0xF8BD)
 ```
 <- host : 'D' (or 'F')
--> host : 1 echo/length byte
-<- host : length byte  L
-<- host : L data bytes               ; buffered at 0x021A..
-          when L (D: >=0x51, F: >=0xA1) bytes have arrived:
-          Boot_MemCopy(0x01A0, buffer, L)      ; stage the RAM routine/data
-          0x01F0 = 0x01F4 = 0x01A0             ; record its address
+<- host : 1 length byte  L                 ; into FRAME[0] (0x021A); F reads up to 0x1A
+<- host : L data bytes                      ; into 0x021B..
+          when all L bytes are in and L >= (D:0x51, F:0xA1):
+            Boot_MemCopy(dstSlot, &FRAME[1], L)   ; D -> 0x01A0, F -> 0x0100
+            record exec address in 0x01F4 (D also 0x01F0)
+-> host : (F only) 1 byte 0x5D              ; ACK
 ```
-`D`/`F` load the **flash-programming routine and its payload into RAM** at
-0x01A0. They do not program anything themselves.
+`D`/`F` load the **flash-programming routine and its payload into RAM**
+(slot 0x01A0 for `D`, 0x0100 for `F`). They do not program flash themselves.
 
 ### `E` — Execute (0xF77E)
 ```
 <- host : 'E'
--> host : 2 response bytes (status, from 0x021A)
-<- host : (when 0x009C frame-ready) 2-byte address in 0x021A:0x021B
-          -> jsr 0x01A0        ; run the downloaded routine with that param
--> host : 1 byte 0x5D          ; completion marker
+<- host : 2-byte address parameter          ; into FRAME[0..1] (0x021A:0x021B)
+          when a complete frame is present (0x009C == 1):
+            jsr 0x01A0                        ; run the routine staged by 'D'
+-> host : 1 byte 0x5D                         ; ACK / completion marker
 ```
-`E` transfers control to the routine previously staged by `D`/`F` — this is
-where the actual flash erase/program happens, inside the downloaded code.
+`E` transfers control to the routine staged by `D` — this is where the
+actual flash erase/program happens, inside the downloaded RAM code.
 
 ### `R` — Read memory (0xF94C)
 ```
 <- host : 'R'
--> host : 3 bytes (echo of addr/len setup, from 0x021A)
-          0x021A:0x021B = start address, 0x021C = count
--> host : 'count' bytes read from [address .. address+count-1]
+<- host : 3 bytes  { addrHi, addrLo, count } ; into FRAME[0..2] (0x021A..0x021C)
+          (if addrHi==0 and a recorded address exists, that address is used)
+-> host : 'count' bytes read from [addr .. addr+count-1]
 ```
 
 ### `C` — Check / blank-check (0xF9C9)
 ```
 <- host : 'C'
--> host : 3 bytes (echo)
-          0x021A:0x021B = start address
-<- host : iterates the region; each byte compared to 0x83 (erased flash)
--> host : result (1 = matches / blank, else 0)
+<- host : 3 bytes  { addrHi, addrLo, count } ; into FRAME[0..2]
+          each byte in the region is compared to 0x83 (erased flash)
+-> host : result byte (1 = erased/blank, 0 = programmed)
 ```
 
 ### `V` — Vectors / version (0xFA5B)
 ```
 <- host : 'V'
           stages: Boot_MemCopy(0x021A, 0xFFC0, 0x1A)   ; CPU vector table
-                  Boot_MemCopy(0x021E?, 0x8604, 0x1E)  ; app version area
--> host : 8 bytes from 0x021A                           ; identity/vectors
+                  Boot_MemCopy(0x021E, 0x8604, 0x1E)   ; app version area
+-> host : 8 bytes from 0x021A                           ; vectors/version
 ```
 
 ### `W` — Write mode (0xFAB4)  and  `L` — Lock mode (0xFABE)
 ```
 <- host : 'W'  -> sets 0x0217 = 0   (write/unlocked)
 <- host : 'L'  -> sets 0x0217 = 1   (locked/verify)
-          then the common body (0xFACA):
--> host : 3 bytes (echo addr/len)
-<- host : address/length
-          performs a block read/verify governed by 0x0217
-          (jmp 0xFB82 / 0xFBA9)
+          common body (0xFACA):
+<- host : 3 bytes  { addrHi, addrLo, count } ; into FRAME[0..2]
+          write mode : fill the 0x021D staging buffer with 0x83 and, for a
+                       target page >= 0x8601, set the 0x55 "program" marker;
+          verify mode: receive 'count' data bytes into 0x021D..
+          then, if a routine is staged and a full frame is present:
+            jsr 0x0100                        ; run the downloaded programmer
+-> host : 1 byte 0x5D                         ; ACK
 ```
 
 ### `Q` — Quit / no-op (0xF948)
 ```
 <- host : 'Q'
--> host : (none) ; handler just returns 1
+-> host : (none) ; handler returns immediately (done)
 ```
 
 ---
@@ -205,9 +212,14 @@ After reprogramming, a reset with a valid application vector at 0xF3FE
 
 ## 7. Notes
 
-* `Boot_SciPutHex` (0xFCC4) despite its label sends **raw bytes** from a
-  buffer into the TX FIFO (not ASCII hex); `Boot_SciPutc` (0xFC67) enqueues
-  a byte block the same way.
+* The two SCI primitives have misleading asm labels — verified from their
+  code: `Boot_SciPutHex` (0xFCC4) actually **receives** (copies bytes out of
+  the RX FIFO at 0x0080 into a buffer, returns the count), and `Boot_SciPutc`
+  (0xFC67) actually **sends** (copies a buffer into the TX FIFO at 0x0075).
+  The reconstruction in `reflash.c` calls them `Boot_SciRecv` / `Boot_SciSend`.
+* Completion convention: the main loop runs `jsr handler; dbnza`, so a
+  handler returns **1 when the command is finished** and 0 while it still
+  expects more bytes.
 * Every handler is fully reconstructed as C in [`reflash.c`](reflash.c)
   (`Cmd_E/I/D/F/Q/R/C/V/W/L`); this document captures the field sizes and
   semantics, and `reference/bootloader.asm` remains the byte-exact source.

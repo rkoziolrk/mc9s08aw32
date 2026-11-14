@@ -142,24 +142,30 @@ void Boot_Main(void)
     Boot_Init();                                 /* [0xF73B] */
     FCDIV = 0x37;                                /* flash clock divider */
 
-    for (;;) {
-        byte id;
-        const struct BootCmdEntry *cmd = 0;
+    {
+        const struct BootCmdEntry *cur = 0;      /* currently selected command */
 
-        Boot_TimeTick();                         /* [0xFD33] */
-        id = Boot_SciPump();                     /* [0xFC10] next received byte */
+        for (;;) {
+            byte id;
 
-        /* match the received id against the command table (0x01F6/0xFE38) */
-        {
-            const struct BootCmdEntry *e;
-            for (e = s_cmdTable; e->id != 0; e++) {
-                if (e->id == id) { cmd = e; R8(0x0218) = 0; break; }
+            Boot_TimeTick();                     /* [0xFD33] */
+            id = Boot_SciPump();                 /* [0xFC10] pump FIFOs, next byte */
+
+            if (cur == 0) {
+                /* no command running: the received byte selects one from the
+                 * table (RAM copy at 0x01F6, built from ROM 0xFE38) */
+                const struct BootCmdEntry *e;
+                for (e = s_cmdTable; e->id != 0; e++) {
+                    if (e->id == id) { cur = e; R8(0x0218) = 0; break; }
+                }
+            } else {
+                /* a command is active: re-enter its handler (it pulls its own
+                 * bytes from the RX FIFO via Boot_SciRecv). It returns 1 when
+                 * finished, at which point the parser is reset. */
+                if (cur->handler() == 1) {
+                    cur = 0;
+                }
             }
-        }
-        /* drive the selected handler until it signals completion (returns 0);
-         * it is re-entered once per received byte via this loop. */
-        if (cmd != 0) {
-            (void)cmd->handler();
         }
     }
 }
