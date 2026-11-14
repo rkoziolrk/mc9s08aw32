@@ -253,25 +253,203 @@ void LinDiag_Response(byte kind)
 }
 
 /* ======================================================================
- * LinTp_RxFrame  [0x93DC]   ISO-TP receive (SF / FF / CF assembly)
- * LinTp_TxFrame  [0x9635]   ISO-TP transmit (SF / FF / CF generation)
- * LinTp_sub_97B0 [0x97B0]   advance the TP transmit sequence
- * LinTp_sub_9806 [0x9806]   abort / reset the TP transfer
+ * ISO-TP (LIN transport) multi-frame assembler.
  *
- * These assemble/emit the multi-frame diagnostic messages in the 0x01E6
- * buffer using the PCI nibble (SF 0x0N, FF 0x1N, CF 0x2N) and the sequence
- * counter at 0x01CD, with the N_As/N_Cr timers from LinTp_Timer.  The
- * detailed state machines are reconstructed byte-for-byte in
- * reference/application.asm (0x93DC-0x9842); the dispatch and the resulting
- * state codes used above are reproduced here.
+ * Diagnostic messages longer than one 8-byte frame are split into:
+ *   SF  Single Frame     PCI high nibble 0x0, low nibble = length (1..6)
+ *   FF  First Frame      PCI 0x1L, next byte = low 8 bits of total length
+ *   CF  Consecutive Frame PCI 0x2N, N = rolling sequence number (1..15)
+ * The reassembled / outgoing payload lives in the buffer at 0x01E6.
+ *
+ * State / counters (page 1):
+ *   g_tpSessionState 0x01D3  0 idle, 3 rx-complete/start-tx, 4 SF sent,
+ *                            5 FF sent, 6 send next CF, 7 CF sent
+ *   g_tpPending      0x01D2  1 = a multi-frame receive is in progress
+ *   0x01CB:0x01CC  remaining length / running offset
+ *   0x01CD         expected/next CF sequence number (4-bit)
+ *   0x01CE:0x01CF  read/write offset into the 0x01E6 payload
+ *   0x01D0         NAD of the transfer
+ *   0x01D1         frame classification (from LinLL_Classify)
+ *   0x01C9:0x01CA  N_Cr-style inter-frame timer
+ * Return codes (consumed by LinDiag_Response): 0 ignore, 1 in-progress,
+ * 2 complete-respond, 3 error.
+ *
+ * Faithful transcription of reference/application.asm 0x93DC-0x9842 with
+ * the original labels kept as goto targets.
+ * ====================================================================== */
+#define TP_STATE   R8(0x01D3)
+#define TP_PEND    R8(0x01D2)
+#define TP_REMAIN  (*(volatile word *)0x01CB)   /* 0x01CB:0x01CC */
+#define TP_SEQ     R8(0x01CD)
+#define TP_ROFF    (*(volatile word *)0x01CE)   /* 0x01CE:0x01CF */
+#define TP_NAD     R8(0x01D0)
+#define TP_BUFFER  ((byte *)0x01E6)
+
+extern byte LinLL_Classify(byte pci, byte sid);  /* [0x9F6B] */
+extern byte LinLL_OnError(void);                 /* [0x9FA9] */
+extern byte LinLL_OnIdle(void);                  /* [0x9FD1] */
+extern void mem_fill_down(byte *dst, word n, byte val); /* [0x9FF7] */
+
+/* ======================================================================
+ * LinTp_RxFrame  [0x93DC]   process one received diagnostic frame
+ * 'f' points at the 8-byte frame (f[0]=NAD, f[1]=PCI, f[2..]=data).
  * ====================================================================== */
 byte LinTp_RxFrame(byte pci, byte data)
 {
+    volatile byte *f = (volatile byte *)0x01D8;   /* the received frame */
+    byte hn;
     (void)pci; (void)data;
-    return R8(0x01D3);                            /* TP state; see asm */
+
+    if (f[0] < 0x80) return 0;                     /* L962E not for the TP */
+    if (f[0] != 0x0A && f[0] != 0x7F) return 3;    /* L9628 wrong NAD */
+
+    hn = (byte)(f[1] & 0xF0);
+
+    if (hn == 0x10) {                              /* ---- First Frame ---- */
+        word total = (word)(((f[1] & 0x0F) << 8) | f[2]);
+        if (total < 0x0007) return 3;              /* too short for a FF */
+        if (TP_PEND != 1) { TP_STATE = 0; TP_PEND = 0; LinLL_OnError(); }
+        if (TP_STATE != 0) { LinLL_OnIdle(); TP_STATE = 0; TP_PEND = 0; }
+        TP_STATE = LinLL_Classify((byte)(f[1] & 0x0F), f[2]);
+        R8(0x01D1) = TP_STATE;
+        if (TP_STATE != 1 && TP_STATE != 2) return 3;
+        mem_copy(TP_BUFFER, (byte *)&f[3], 5);     /* first 5 data bytes */
+        TP_REMAIN = (word)(total - 5);
+        TP_SEQ    = 1;
+        TP_ROFF   = 5;
+        R8(0x01D0) = f[0];
+        TP_PEND   = 1;
+        return 2;                                  /* L954B: await CFs */
+    }
+
+    if (hn == 0x20) {                              /* ---- Consecutive Frame ---- */
+        if (TP_PEND != 1) return 1;                /* L9616/961C */
+        if ((byte)(f[1] & 0x0F) != TP_SEQ) {       /* sequence error */
+            LinLL_OnError(); TP_STATE = 0; TP_PEND = 0;
+            return 3;
+        }
+        if (TP_REMAIN < 0x0007) {                  /* last CF */
+            mem_copy(TP_BUFFER + TP_ROFF, (byte *)&f[2], (byte)TP_REMAIN);
+            TP_REMAIN = 0; TP_STATE = 0; TP_PEND = 0;
+            LinLL_OnError();
+            return 2;                              /* message complete */
+        }
+        mem_copy(TP_BUFFER + TP_ROFF, (byte *)&f[2], 6);
+        TP_ROFF  += 6;
+        TP_SEQ    = (byte)((TP_SEQ + 1) & 0x0F);
+        TP_REMAIN = (word)(TP_REMAIN - 6);
+        return 1;                                  /* more CFs expected */
+    }
+
+    if (hn == 0x00) {                              /* ---- Single Frame ---- */
+        byte len = (byte)(f[1] & 0x0F);
+        if (len == 0 || len > 6) {                 /* not a valid SF start */
+            if (TP_PEND) return 1;
+            return (TP_STATE) ? 3 : 2;
+        }
+        if (TP_PEND) { TP_STATE = 0; TP_PEND = 0; LinLL_OnError(); }
+        if (TP_STATE) { LinLL_OnIdle(); TP_STATE = 0; TP_PEND = 0; }
+        TP_STATE = LinLL_Classify(len, f[2]);
+        R8(0x01D1) = TP_STATE;
+        if (TP_STATE != 1 && TP_STATE != 2) return 3;
+        mem_copy(TP_BUFFER, (byte *)&f[2], 6);     /* the whole payload */
+        LinLL_OnError();
+        return 2;                                  /* complete -> respond */
+    }
+
+    /* other PCI: continue a pending transfer or ignore */
+    if (TP_PEND) return 1;
+    return (TP_STATE) ? 2 : 3;
 }
 
+/* ======================================================================
+ * LinTp_TxFrame  [0x9635]   emit the next response frame into 'f' (0x01D8)
+ * Produces an SF (short response), or an FF followed by CFs.
+ * ====================================================================== */
 void LinTp_TxFrame(void)
 {
-    /* mirror of LinTp_RxFrame for the publish direction; see asm 0x9635. */
+    volatile byte *f = (volatile byte *)0x01D8;
+
+    if (TP_STATE == 0x03) {                        /* first response frame */
+        R8(0x01C9) = 0; R8(0x01CA) = 0;
+        f[0] = TP_NAD;
+        if (TP_REMAIN < 0x0007) {                  /* ---- Single Frame ---- */
+            f[1] = R8(0x01CC);                      /* PCI = length */
+            mem_copy((byte *)&f[2], TP_BUFFER, (byte)TP_REMAIN);
+            mem_fill_down((byte *)&f[2] + TP_REMAIN,
+                          (word)(6 - R8(0x01CC)), 0xFF);
+            TP_STATE = 0x04;                        /* SF sent */
+            TP_REMAIN = 0;
+        } else {                                    /* ---- First Frame ---- */
+            f[1] = (byte)((R8(0x01CB) & 0x0F) | 0x10);
+            f[2] = R8(0x01CC);
+            mem_copy((byte *)&f[3], TP_BUFFER, 5);
+            TP_REMAIN = (word)(TP_REMAIN - 5);
+            TP_SEQ  = 1;
+            TP_ROFF = 5;
+            TP_STATE = 0x05;                        /* FF sent */
+        }
+    } else if (TP_STATE == 0x06) {                 /* ---- Consecutive Frame ---- */
+        f[0] = TP_NAD;
+        f[1] = (byte)(TP_SEQ | 0x20);
+        if (TP_REMAIN < 0x0007) {                  /* last CF */
+            mem_copy((byte *)&f[2], TP_BUFFER + TP_ROFF, (byte)TP_REMAIN);
+            mem_fill_down((byte *)&f[2] + TP_REMAIN,
+                          (word)(6 - R8(0x01CC)), 0xFF);
+            TP_ROFF = 0; TP_REMAIN = 0;
+            TP_STATE = 0x07;
+        } else {
+            mem_copy((byte *)&f[2], TP_BUFFER + TP_ROFF, 6);
+            TP_ROFF  += 6;
+            TP_REMAIN = (word)(TP_REMAIN - 6);
+            TP_STATE  = 0x07;
+            TP_SEQ    = (byte)((TP_SEQ + 1) & 0x0F);
+        }
+    } else {
+        return;                                    /* nothing to send */
+    }
+    R8(0x01CA) = 0x14;                             /* arm the inter-frame timer */
+    R8(0x01C9) = 0;
+}
+
+/* ======================================================================
+ * LinTp_sub_97B0  [0x97B0]   advance the transmit sequence after a CF/SF
+ * was consumed by the master: SF (state 4) finishes the transfer; FF/CF
+ * (states 5/7) schedule the next CF (state 6) or finish when drained.
+ * Returns 1 while more frames remain, 3 when idle.
+ * ====================================================================== */
+byte LinTp_sub_97B0(void)
+{
+    if (TP_STATE == 0x04) {                        /* SF acknowledged -> done */
+        TP_STATE = 0; R8(0x01C9) = 0; R8(0x01CA) = 0;
+        return (LinLL_OnIdle() == 0) ? 3 : 1;
+    }
+    if (TP_STATE == 0x05 || (TP_STATE == 0x07 && TP_REMAIN != 0)) {
+        TP_STATE = 0x06;                            /* send the next CF */
+        R8(0x01CA) = 0x14; R8(0x01C9) = 0;
+        return 1;
+    }
+    if (TP_STATE == 0x07) {                         /* all CFs drained -> done */
+        TP_STATE = 0; R8(0x01C9) = 0; R8(0x01CA) = 0;
+        return (LinLL_OnIdle() == 0) ? 3 : 1;
+    }
+    return 3;
+}
+
+/* ======================================================================
+ * LinTp_sub_9806  [0x9806]   abort / reset the transport transfer
+ * Clears the TP state (and the buffers) and notifies the lower layer; if a
+ * transmit was mid-sequence it also resets the length/offset counters.
+ * ====================================================================== */
+void LinTp_sub_9806(void)
+{
+    if (TP_STATE == 0x04 || TP_STATE == 0x05 || TP_STATE == 0x07) {
+        TP_STATE = 0; TP_PEND = 0; R8(0x01C9) = 0; R8(0x01CA) = 0;
+        LinLL_OnIdle();
+        return;
+    }
+    if (TP_PEND != 1) return;
+    TP_STATE = 0; TP_PEND = 0;
+    TP_REMAIN = 0; TP_ROFF = 0;
+    LinLL_OnError();
 }
