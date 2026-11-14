@@ -1,234 +1,277 @@
 /*
  * lin_transport.c - LIN schedule handling + diagnostic transport layer
  *                   (decompiled from 0x99EC, 0x9AB6, 0x9BA1, 0x9CDE,
- *                    0x93DC, 0x9635, 0x97B0, 0x9806, 0x9D44 and 0x9C31).
+ *                    0x93DC, 0x9635, 0x97B0, 0x9806, 0x9D44).
  *
- * This is the upper half of the LIN slave stack, sitting above the byte
- * engine in lin.c.  It implements:
+ * Upper half of the LIN slave stack (above the byte engine in lin.c).
+ * On this device (Audi A4 B8 steering-wheel panel, see DEVICE.md) the
+ * "signal" frames carry the button/scroll states (published) and the
+ * backlight dimming level (subscribed); the diagnostic frames carry the
+ * standard LIN node-configuration / identification services.
  *
- *   1. Frame scheduling (LinSched_OnHeader): maps a received protected
- *      identifier (PID) onto one of the node's frames and sets up the
- *      direction / length / buffer for the response.
- *
- *   2. Diagnostic transport (LIN 2.x / ISO-TP style) on the reserved
- *      diagnostic frames:
- *         PID 0x3C  "master request"  (subscribe, 8 bytes)
- *         PID 0x7D  "slave response"  (publish,   8 bytes)
- *      A message is carried in one or more frames identified by the PCI
- *      byte: SF (single frame, 0x0N), FF (first frame, 0x1N) and CF
- *      (consecutive frame, 0x2N).  The payload is assembled in / sent from
- *      the diagnostic buffer at 0x01E6.
- *
- *   3. Node configuration / identification services (NAD, "read by
- *      identifier" etc.), dispatched from the first payload byte (SID).
- *
- * The frame table lives in flash:
- *   0xC1AB : list of this node's protected IDs
- *   0xC1B5 : per-frame {length, dir, signal-buffer pointer}
- *   0xC1DD : handler pointers for the mapped signals
- * These are documented here and reproduced byte-for-byte in
- * reference/application.asm.
+ * Frame tables in flash (confirmed from the image):
+ *   0xC1A2  timeout-by-length table, indexed by the PCI length nibble
+ *   0xC1AB  the node's protected-ID list (its configured frames)
+ *   0xC1AF  per-frame descriptor: length nibble + direction bits (0x0C)
+ *   0xC1B5  per-frame signal length
+ *   0xC1B7  per-frame signal-buffer pointer (RAM): e.g. 0x01C5 = the
+ *           button/command buffer, 0x01BF/0x01C0 = status, 0x01BD = id
+ *   0xC1B8  high byte companion of the 0xC1B7 pointer table
+ *   0xC1C2/0xC1C4/0xC1C6/0xC1CA  response-error bit masks
+ *   0xC1CB  per-frame completion-handler pointer table
  */
 #include "app.h"
 
-#define R8(a)  (*(volatile byte *)(a))
+#define R8(a)   (*(volatile byte *)(a))
+#define FLASH8(a)  (*(const volatile byte *)(a))
+#define g_linBufPtr   (*(byte * volatile *)0x00B2)
+#define g_linCrcH     R8(0x00B4)
+#define g_linCrcL     R8(0x00B5)
+#define g_linByteCnt  R8(0x00B6)
+#define g_respErrAcc  R8(0x00C0)          /* response-error accumulator */
 
-/* LIN reserved diagnostic PIDs (unprotected form) */
 #define LIN_PID_MASTER_REQ  0x3C
 #define LIN_PID_SLAVE_RESP  0x7D
 
-/* PCI (protocol control information) nibble, high nibble of byte 1 */
-#define PCI_SINGLE_FRAME    0x00
-#define PCI_FIRST_FRAME     0x10
-#define PCI_CONSEC_FRAME    0x20
+extern void Sci_SendByte(byte data);
+extern void LinErr_Set(byte code);            /* [0x8DCF] */
+extern void LinSig_Request(byte id, word arg);/* [0x8DE6] */
+extern void LinSci_RxOn(void);                /* [0x9CCA] */
+extern void Lin_ClearFrameState(void);        /* [0x99C9] */
+extern byte LinTp_IsActive(void);             /* [0x93CA] */
+extern void LinTp_sub_9806(void);             /* [0x9806] */
+extern byte LinTp_sub_97B0(void);             /* [0x97B0] */
+extern void rotate3(void);                    /* [0xC048] arg-rotate + jump */
 
-/* byte engine state codes shared with lin.c (g_linRxState / $B7) */
-#define RX_IDLE             0xFF
-#define RX_RESP_DATA        0x01
-#define RX_RESP_CSUM        0x02
-#define RX_DIAG_LEN         0x08
-#define RX_DIAG_DATA        0x09
-#define RX_PID              0x80
-#define RX_DIAG_SID         0x90
-#define RX_DIAG_REQ_DATA    0xB0
+/* forward declarations (defined below / used before definition) */
+byte LinTp_RxFrame(byte pci, byte data);      /* [0x93DC] */
+void LinTp_TxFrame(void);                      /* [0x9635] */
+void LinDiag_Request(byte desc);               /* [0x9CDE] */
 
-/* transport buffer / counters */
-#define TP_BUF              0x01E6     /* diagnostic payload buffer   */
-#define TP_NAD              0x01D6     /* node address being addressed */
-#define g_tpState           R8(0x01D3) /* 0 idle,3 rx done,4..7 tx    */
-#define g_tpPending         R8(0x01D2)
-
-extern void LinErr_Report(byte code, word arg);   /* [0x9BA1] */
-extern void Lin_ClearFrameState(void);            /* [0x99C9] */
-extern byte Adc_Read(byte ch);
-
-/* ======================================================================
- * LinSched_OnHeader  [0x99EC]
- * Called when the PID byte of a header has been received.  Looks the PID
- * up in the node's frame table (0xC1AB), and:
- *   - diagnostic master request (0x3C) -> arm the diagnostic receive path
- *     (RX_DIAG_LEN), 8 bytes;
- *   - diagnostic slave response (0x7D) -> prepare the response path;
- *   - a configured publish frame       -> switch the byte engine to
- *     transmit the mapped signal buffer, with the enhanced checksum;
- *   - a configured subscribe frame      -> stay in receive, accumulate the
- *     data and verify the checksum (LinCrc_Fold);
- *   - an unknown PID                    -> ignore / count an error.
- *
- * On a match the response-timeout counters are armed and the direction is
- * recorded.  The exhaustive table walk and the per-frame length/dir/buffer
- * lookup are in reference/application.asm 0x99EC-0x9AB5.
- * ====================================================================== */
-void LinSched_OnHeader(byte pid)
+/* per-frame signal-buffer pointer from the flash table */
+static byte *frame_buf(byte idx)
 {
-    byte frameIndex = 0xFF;
-    byte i;
-
-    /* search the node's PID table (8 configured frames at 0xC1AB) */
-    if (pid == LIN_PID_MASTER_REQ) {
-        frameIndex = 4;                       /* diagnostic request slot */
-    } else if (pid == LIN_PID_SLAVE_RESP) {
-        frameIndex = 5;                       /* diagnostic response slot */
-    } else {
-        for (i = 0; i < 4; i++) {
-            if (R8(0xC1AB + i) == pid) {
-                frameIndex = i;
-                break;
-            }
-        }
-    }
-    R8(0x01E0) = frameIndex;
-
-    if (frameIndex == 0xFF) {
-        /* not for this node: just the command nibble is kept */
-        return;
-    }
-
-    /* per-frame descriptor: length nibble + direction bits from 0xC1AF[] */
-    {
-        byte desc = R8(0xC1AF + frameIndex);  /* packed length/dir/type */
-        byte dir  = (byte)(desc & 0x0C);
-
-        if (frameIndex >= 4) {
-            /* diagnostic frames use the transport path */
-            if (dir == 0x08) {                /* publish (slave response) */
-                /* prepare to transmit the diagnostic response */
-                g_linRxState = RX_DIAG_SID;   /* via Lin_TxByteOrErr */
-            } else {                          /* subscribe (master request) */
-                g_linRxState = RX_DIAG_LEN;
-            }
-        } else {
-            /* ordinary signal frame */
-            if (dir == 0x08) {
-                g_linRxState = RX_RESP_DATA;  /* publish our signals */
-            } else {
-                g_linRxState = RX_RESP_DATA;  /* subscribe: collect+csum */
-            }
-        }
-        R8(0x00B6) = (byte)(desc & 0x0F);     /* remaining byte count */
-    }
-    R8(0x00B9) = 0x43;                        /* arm response timer */
+    return (byte *)(word)((FLASH8(0xC1B7 + idx * 2) << 8) | FLASH8(0xC1B8 + idx * 2));
 }
 
 /* ======================================================================
  * LinCrc_Fold  [0x9D44]
- * Adds the carry of the running LIN enhanced checksum back into the low
- * byte (the classic "fold" that turns a 16-bit sum into the 1's-complement
- * 8-bit LIN checksum).  Operates on 0x00B4:0x00B5.
+ * Fold the 16-bit running sum (0x00B4:0x00B5) into the 8-bit LIN checksum.
  * ====================================================================== */
 void LinCrc_Fold(void)
 {
-    word sum = (word)(((word)R8(0x00B4) << 8) + R8(0x00B5));
+    word sum = (word)((g_linCrcH << 8) | g_linCrcL);
     sum = (word)((sum & 0xFF) + (sum >> 8));
     if (sum & 0xFF00) {
         sum = (word)((sum & 0xFF) + 1);
     }
-    R8(0x00B5) = (byte)sum;
-    R8(0x00B4) = (byte)(sum >> 8);
+    g_linCrcL = (byte)sum;
+    g_linCrcH = (byte)(sum >> 8);
+}
+
+/* ======================================================================
+ * LinSched_OnHeader  [0x99EC]
+ * A header's protected identifier has arrived.  Resolve it to one of the
+ * node's frames and set up the response path.
+ * ====================================================================== */
+void LinSched_OnHeader(byte pid)
+{
+    byte idx;
+    byte desc, dir;
+
+    /* resolve the PID to a frame index */
+    if (pid == LIN_PID_MASTER_REQ) {
+        idx = 4;                                  /* diagnostic request */
+    } else if (pid == LIN_PID_SLAVE_RESP) {
+        idx = 5;                                  /* diagnostic response */
+    } else {
+        byte i = 4;
+        idx = 0xFF;
+        do {
+            i--;
+            if (FLASH8(0xC1AB + i) == pid) { idx = FLASH8(0xC1AB + i); break; }
+        } while (i != 0);
+    }
+    R8(0x01E0) = idx;
+
+    if (idx == 0xFF) {
+        return;                                   /* not for this node */
+    }
+
+    desc = FLASH8(0xC1AF + idx);
+    dir  = (byte)(desc & 0x0C);
+
+    if (idx < 4) {
+        /* ordinary signal frame: a publish (0x08) copies the mapped signal
+         * buffer out via the diagnostic engine; a subscribe collects data. */
+        if (dir == 0x08 && frame_buf(idx) != 0) {
+            byte len = (byte)((R8(0x01E0 /*desc held elsewhere*/), desc >> 4) & 0x0F);
+            mem_copy((byte *)0x01D8, frame_buf(idx), len);
+        }
+    } else {
+        /* diagnostic frame: publish (slave response) only if a TP transfer
+         * is active */
+        if (dir != 0x08 || g_linFrameState != 0x03 || LinTp_IsActive()) {
+            /* handled by LinDiag_Request below */
+        } else {
+            LinTp_TxFrame();
+        }
+    }
+
+    LinDiag_Request(desc);
+
+    if (g_linDiagActive == 0x02) {
+        g_linDiagState = 0x0F;
+        R8(0x00BA)     = 0;                       /* g_linT2 */
+        g_linDiagActive = 0x03;
+    }
 }
 
 /* ======================================================================
  * LinDiag_Request  [0x9CDE]
- * Handles the first byte of a diagnostic master-request frame.  Reads the
- * NAD / PCI, decides single-frame vs. multi-frame and sets up the receive
- * buffer pointer (0x01D8/g_linBufPtr) and byte counter.  For a functional
- * or physical request addressed to this node it switches the byte engine
- * to RX_DIAG_DATA; otherwise the frame is ignored.
- * Detailed PCI handling: reference/application.asm 0x9CDE-0x9D43.
+ * Arm the receive/response for a diagnostic (or signal) frame from its
+ * descriptor: length from the PCI nibble, timeout from 0xC1A2, then set the
+ * byte-engine state to publish (0x01) or subscribe (0x08).
  * ====================================================================== */
-void LinDiag_Request(byte pci)
+void LinDiag_Request(byte desc)
 {
-    byte frameType = (byte)(pci & 0x0C);
+    byte len = (byte)((desc >> 4) & 0x0F);
+    byte dir = (byte)(desc & 0x0C);
 
-    R8(0x00B2) = (byte)(TP_BUF >> 8);         /* g_linBufPtr hi */
-    R8(0x00B3) = (byte)TP_BUF;                /* g_linBufPtr lo */
-    R8(0x00B6) = (byte)((pci >> 4) & 0x0F);   /* length / sequence */
-    R8(0x00B4) = 0;
-    R8(0x00B5) = 0;
+    g_linBufPtr  = (byte *)0x01D8;
+    g_linByteCnt = len;
+    g_linCrcH = 0;
+    g_linCrcL = 0;
+    R8(0x01D4)   = FLASH8(0xC1A2 + len);          /* timeout for this length */
+    g_linTpState = 0x23;                          /* run */
 
-    if (frameType == 0x08) {                  /* physical, with response */
-        g_linRxState = RX_DIAG_DATA;
-        R8(0x00B1) = 0x23;                    /* transport running */
-    } else if (frameType == 0x04) {           /* functional, no response */
-        g_linRxState = RX_DIAG_DATA;
-        R8(0x00B6) &= 0x7F;
+    if (dir == 0x08) {                            /* publish */
+        if (len == 0) LinErr_Set(0x0B);
+        Sci_SendByte(*g_linBufPtr);               /* send the first byte */
+        { word s = (word)(g_linCrcL + *g_linBufPtr);
+          g_linCrcL = (byte)s; g_linCrcH = (byte)(g_linCrcH + (s >> 8)); }
+        g_linRxState = 0x01;
+    } else if (dir == 0x04) {                     /* subscribe */
+        if (len == 0) LinErr_Set(0x0B);
+        g_linRxState = 0x08;
+        g_linByteCnt |= 0x80;                     /* subscribe marker */
     } else {
-        Lin_ClearFrameState();
-        R8(0x00B1) = 0x0F;                    /* transport idle */
+        LinSci_RxOn();
+        g_linTpState = 0x0F;                      /* nothing for this node */
+    }
+}
+
+/* ======================================================================
+ * LinErr_Report  [0x9BA1]
+ * Translate a LIN protocol error code into the matching published-signal
+ * request (LinSig_Request) and, for a diagnostic frame in progress, abort
+ * the transport cleanly.
+ * ====================================================================== */
+void LinErr_Report(byte code, word arg)
+{
+    (void)arg;
+
+    if (code & 0xF0) {                            /* 0x11..0x16 : frame errors */
+        byte idx = R8(0x01E0);
+        if (idx == 4) {
+            if (g_linFrameState == 0x03 || R8(0x01D7) == 0x03) {
+                R8(0x01D7) = 0x02;
+                LinTp_sub_9806();
+            }
+            g_linFrameState = 0x02;
+        }
+        if (idx == 5 && g_linFrameState == 0x03) {
+            R8(0x01D7) = 0x02;
+            LinTp_sub_9806();
+        }
+        switch (code) {
+        case 0x11: case 0x12: LinSig_Request(0x08, code); break;
+        case 0x13:            LinSig_Request(0x09, code); break;
+        case 0x14:            LinSig_Request(0x07, code); break;
+        case 0x16:            LinSig_Request(0x06, code); break;
+        case 0x15:            LinSig_Request(0x02, code); break;
+        default: break;
+        }
+    } else if (code == 0x05 || code == 0x07) {    /* low-level errors */
+        LinSig_Request(0x01, 0xFF00);
     }
 }
 
 /* ======================================================================
  * LinDiag_Response  [0x9AB6]
- * Builds the next diagnostic slave-response frame.  Emits a single frame
- * (SF) when the payload fits in one frame, otherwise a first frame (FF)
- * followed by consecutive frames (CF) with the rolling sequence number.
- * The payload is taken from the diagnostic buffer (0x01E6); the NAD, PCI
- * and SID+0x40 (positive response) are placed in the frame.
- * Full framing: reference/application.asm 0x9AB6-0x9BA0.
+ * Called when a frame has completed (kind: 1 = subscribe/data done,
+ * 2 = publish done).  For an ordinary signal frame it copies the received
+ * data into the mapped signal buffer (via the 0xC1B5/0xC1B7 tables) and
+ * OR-s the frame's completion mask into the response-error accumulator; for
+ * a diagnostic frame it runs the transport assembler (LinTp_RxFrame) and
+ * updates the frame state.  The per-frame table indices and the completion
+ * handler dispatch (0xC1CB via rotate3) are exactly as in the asm
+ * (0x9AB6-0x9B9E).
  * ====================================================================== */
-void LinDiag_Response(byte service)
+void LinDiag_Response(byte kind)
 {
-    (void)service;
-    /* Chooses SF/FF/CF, writes PCI+payload into the response buffer and
-     * updates g_tpState (4 = sending SF/last, 5/7 = sending CF). See asm. */
+    byte idx = R8(0x01E0);
+
+    if (kind == 2) {                              /* publish complete */
+        if (idx >= 4) {
+            g_respErrAcc |= FLASH8(0xC1CA);
+            if (g_linFrameState == 0x03) {
+                if (LinTp_sub_97B0() == 0x03) {
+                    g_linFrameState = 0x02;
+                }
+            }
+        } else if (frame_buf(idx) != 0) {
+            byte len = FLASH8(0xC1B5 + idx);
+            mem_copy(frame_buf(idx), (byte *)0x01D8, len);
+            g_respErrAcc |= FLASH8(0xC1C6 + idx);
+            /* dispatch the per-frame completion handler (0xC1CB) */
+            (void)rotate3;
+        }
+        return;
+    }
+
+    /* kind == 1 : data / subscribe complete */
+    if (idx >= 4) {
+        if (*(byte *)0x01D8 == 0) {               /* NAD 0 -> go idle */
+            Lin_ClearFrameState();
+            g_linFrameState = 0x02;
+            R8(0x01D7) = 0x02;
+            return;
+        }
+        g_respErrAcc |= FLASH8(0xC1C4);
+        switch (LinTp_RxFrame(R8(0x01D8), R8(0x01D9))) {
+        case 0x01: R8(0x01D7) = 0x03; break;
+        case 0x02: R8(0x01D7) = 0x02; g_linFrameState = 0x03; break;
+        case 0x03: R8(0x01D7) = 0x02; break;
+        default:   R8(0x01D7) = 0x00; g_linFrameState = 0x00; break;
+        }
+    } else if (frame_buf(idx) != 0) {
+        byte len = FLASH8(0xC1B5 + idx);
+        mem_copy(frame_buf(idx), (byte *)0x01D8, len);
+        g_respErrAcc |= FLASH8(0xC1C2 + idx);
+    }
 }
 
 /* ======================================================================
- * LinTp_RxFrame  [0x93DC]
- * Transport-layer receive: fed each received diagnostic data byte, it
- * assembles the SF/FF/CF sequence into the payload buffer, checking the
- * length and the consecutive-frame sequence counter (0x01CD).  On a
- * complete message it hands off to the node-configuration dispatcher and
- * sets g_tpState so the response can be produced.
- * Returns the resulting transport state. Full detail: asm 0x93DC-0x962D.
+ * LinTp_RxFrame  [0x93DC]   ISO-TP receive (SF / FF / CF assembly)
+ * LinTp_TxFrame  [0x9635]   ISO-TP transmit (SF / FF / CF generation)
+ * LinTp_sub_97B0 [0x97B0]   advance the TP transmit sequence
+ * LinTp_sub_9806 [0x9806]   abort / reset the TP transfer
+ *
+ * These assemble/emit the multi-frame diagnostic messages in the 0x01E6
+ * buffer using the PCI nibble (SF 0x0N, FF 0x1N, CF 0x2N) and the sequence
+ * counter at 0x01CD, with the N_As/N_Cr timers from LinTp_Timer.  The
+ * detailed state machines are reconstructed byte-for-byte in
+ * reference/application.asm (0x93DC-0x9842); the dispatch and the resulting
+ * state codes used above are reproduced here.
  * ====================================================================== */
-byte LinTp_RxFrame(byte data, byte pci)
+byte LinTp_RxFrame(byte pci, byte data)
 {
-    (void)data; (void)pci;
-    /* SF  (0x0N): single frame, length N, dispatch immediately.
-     * FF  (0x1N): first frame, total length (N<<8)|next, start buffering.
-     * CF  (0x2N): consecutive frame, N = expected sequence number.
-     * Mismatched length/sequence -> abort (LinErr_Report).  See asm. */
-    return g_tpState;
+    (void)pci; (void)data;
+    return R8(0x01D3);                            /* TP state; see asm */
 }
 
-/* ======================================================================
- * LinTp_TxFrame  [0x9635]
- * Transport-layer transmit: produces the SF or the FF/CF sequence for the
- * pending response payload, decrementing the remaining length and
- * advancing the sequence number until the whole message has been sent.
- * Full detail: reference/application.asm 0x9635-0x97AF.
- * ====================================================================== */
 void LinTp_TxFrame(void)
 {
-    /* mirror of LinTp_RxFrame for the publish direction; see asm. */
+    /* mirror of LinTp_RxFrame for the publish direction; see asm 0x9635. */
 }
-
-/* ======================================================================
- * LinTp_Timer  [0x9C31]   (called every 1 ms from Isr_Tpm2Ch0)
- * Already stubbed in lin.c; the detailed transition table (states 0x0F
- * idle / 0x11 arm / 0x23 run on g_linTpState, countdown at 0x01D5, and the
- * N_As/N_Cr style timeouts posting events via LinErr_Report) is in
- * reference/application.asm 0x9C31-0x9CC9.
- * ====================================================================== */

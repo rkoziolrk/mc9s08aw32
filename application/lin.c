@@ -40,6 +40,16 @@ byte g_linProductId;            /* [0x01BD] */
 byte g_linVariant;              /* [0x01BE] */
 byte g_linAppFlags;             /* [0x02AE] */
 
+/* ---- zero-page accessors used by the byte engine and the TP timer ----- */
+#define R8(a)         (*(volatile byte *)(a))
+#define g_linBufPtr   (*(byte * volatile *)0x00B2)   /* 16-bit buffer pointer */
+#define g_linCrcH     R8(0x00B4)
+#define g_linCrcL     R8(0x00B5)
+#define g_linByteCnt  R8(0x00B6)
+#define g_linT1       R8(0x00B9)
+#define g_linT3       R8(0x00BB)
+/* g_linTpState / g_linRxState / g_linDiagState etc. are the real globals above */
+
 /* Internal helpers (reconstructed from the engine; prototypes only here) */
 static void Lin_RxByte(byte data);          /* [0x9D62] */
 static void Lin_TxByteOrErr(byte event);    /* [0x9E75] */
@@ -286,12 +296,60 @@ void Lin_Supervise(void)
  * ====================================================================== */
 void LinTp_Timer(void)
 {
+    extern void LinSci_RxOff(void);     /* [0x9CD0] */
+    extern void LinSci_TxBreak(void);   /* [0x9CD4] */
+
     LinCrit_Enter();
-    /* --- see LinTp_Timer in reference/application.asm (0x9C31-0x9CC9) ---
-     * state in g_linTpState ($B1): 0x0F idle, 0x11 arm, 0x23 run;
-     * decrements the running counter at 0x01D5 and, on expiry, posts the
-     * next transport event through LinErr_Report (0x9BA1) / LinSci_RxOn.
-     */
+
+    /* --- transport (N_As/N_Cr) timer state machine, g_linTpState ($B1) --- */
+    switch (g_linTpState) {
+    case 0x11:                              /* arm: load the timeout */
+        R8(0x01D5) = R8(0x01D4);
+        g_linTpState = 0x10;
+        break;
+    case 0x23:                              /* re-arm: add to the timeout */
+        R8(0x01D5) += R8(0x01D4);
+        g_linTpState = 0x20;
+        break;
+    case 0x0F:                              /* idle: clear */
+        R8(0x01D5) = 0;
+        g_linTpState = 0;
+        break;
+    default:
+        break;
+    }
+    if (R8(0x01D5) != 0) {                   /* running: count down */
+        if (--R8(0x01D5) == 0) {             /* expired -> timeout error */
+            if (g_linTpState == 0x10) {
+                LinErr_Report(0x05, 0);
+            } else if (g_linTpState == 0x20) {
+                LinErr_Report((g_linByteCnt & 0x80) ? 0x15 : 0x16, 0);
+            }
+            g_linTpState = 0;
+            LinSci_RxOn();
+        }
+    }
+
+    /* --- diagnostic sequencing timer, g_linDiagState ($BC) / g_linT3 ($BB) --- */
+    if (g_linDiagState == 0x01) {
+        g_linT3 = R8(0x01E1);
+        g_linDiagState = 0x11;
+    } else if (g_linDiagState == 0x0F) {
+        g_linT3 = 0;
+        g_linDiagState = 0;
+    }
+    if (g_linT3 != 0 && --g_linT3 == 0) {
+        if (g_linDiagState == 0x11 || g_linDiagState == 0x12) {
+            g_linDiagState++;
+            g_linT3 = 0x08;
+            LinSci_RxOff();
+            LinSci_TxBreak();               /* send the wake-up / break */
+        } else if (g_linDiagState == 0x13) {
+            g_linDiagState = 0;
+            R8(0x00BA) = 0x29;              /* g_linT2 */
+        }
+    }
+
     LinCrit_Leave();
 }
 
@@ -324,14 +382,6 @@ static void LinCrit_Leave(void)
 }
 
 /* ---- shared LIN byte-engine state (zero page) ------------------------- */
-#define g_linBufPtr   (*(byte * volatile *)0x00B2)   /* 16-bit buffer pointer */
-#define g_linCrcH     R8(0x00B4)
-#define g_linCrcL     R8(0x00B5)
-#define g_linByteCnt  R8(0x00B6)
-#define g_linT1       R8(0x00B9)
-#define g_linTpState  R8(0x00B1)
-#define R8(a)         (*(volatile byte *)(a))
-
 extern void LinSched_OnHeader(byte pid);      /* [0x99EC] */
 extern void LinErr_Set(byte code);            /* [0x8DCF] */
 extern void LinErr_Report(byte code, word arg);/* [0x9BA1] */
