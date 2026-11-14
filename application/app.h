@@ -165,6 +165,7 @@ INTERRUPT void MotorPos_Isr(void);
 void Fault_Init(void); void Fault_Task(void);  void Fault_Report(byte code);
 void Outputs_Init(void); void Outputs_Task(void);
 void Inputs_Init(void); void Supply_Init(void); void Supply_Task(void);
+extern byte g_resetStatus;   /* [0x010B] selftest.c */
 extern byte g_supplyDebounce, g_supplyLatched, g_tempCode, g_tempValue;  /* supply.c */
 void Heater_Init(void); void Heater_Task(void);
 void Diag_Init(void);  void Diag_Task(void);   void Diag_SlowTask(void);

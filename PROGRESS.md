@@ -28,8 +28,8 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] Interrupt vector mapping (doc + optional standalone table) — `application/vectors.c`
 - [~] Supply-voltage monitor — `application/supply.c` (`Supply_Init` 0xB932, `Supply_Task` 0xB9FD; aux-channel descriptor walk referenced in asm)
 - [~] Fault handling — `application/fault.c` (`Fault_Init` 0xAA10, `Fault_Task` 0xAA36, `Fault_Report` 0xAA0C; descriptor-table read + action dispatch referenced in asm)
-- [ ] Inputs — `Inputs_Init` 0xB84D
-- [ ] Outputs — `Outputs_Init` 0xBC54, `Outputs_Task` 0xBCB1
+- [x] Inputs/signal-state init — `application/inputs.c` (`Inputs_Init` 0xB84D)
+- [~] Reset logging + flash self-test — `application/selftest.c` (`Outputs_Init` 0xBC54 = reset-cause counters + variant select; `Outputs_Task` 0xBCB1 = incremental flash CRC, walk referenced in asm). NOTE: auto-label 'Outputs_*' is a misnomer; real purpose documented.
 - [ ] Controller — `Ctrl_Init` 0xA12E, `Ctrl_Start` 0xA1E6, `Ctrl_Task` 0xA256, `Ctrl_SlowTask` 0xA694
 - [ ] Motor driver — `Motor_Init` 0xA99E, `Motor_Task` 0xA9A9
 - [ ] Motor position / commutation — `MotorPos_Init` 0xA6F9, `MotorPos_Isr` 0xA719, `MotorPos_Task` 0xA5B5
