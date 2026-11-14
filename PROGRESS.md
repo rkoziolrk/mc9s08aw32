@@ -18,8 +18,8 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] Startup / scheduler / 1 ms time base / clock / STOP — `application/main.c`
 - [x] LIN SCI driver, break detect, auto-baud, SCI & capture ISRs, init/supervise — `application/lin.c`
 - [~] LIN byte RX/TX engines (`Lin_RxByte` 0x9D62, `Lin_TxByteOrErr` 0x9E75) — `application/lin.c`
-- [ ] LIN transport layer (`LinTp_RxFrame` 0x93DC, `LinTp_TxFrame` 0x9635, `LinTp_Timer` 0x9C31)
-- [ ] LIN diagnostic layer (`LinDiag_Request` 0x9CDE, `LinDiag_Response` 0x9AB6, `LinSched_OnHeader` 0x99EC)
+- [~] LIN transport layer — `application/lin_transport.c` (`LinTp_RxFrame` 0x93DC, `LinTp_TxFrame` 0x9635, `LinCrc_Fold` 0x9D44, PCI SF/FF/CF; byte-level framing referenced in asm)
+- [~] LIN diagnostic + schedule — `application/lin_transport.c` (`LinSched_OnHeader` 0x99EC with PID table, `LinDiag_Request` 0x9CDE, `LinDiag_Response` 0x9AB6)
 - [~] LIN signal mapping — `application/lin_signals.c` (`LinApp_Reset` 0x8E10, `LinApp_DecodeCommand` 0x8E35 with full command bit layout, `LinApp_Supervise` 0x8E8B, `LinApp_CountIdle` 0x8EC7; `LinSig_BuildStatus` 0x8F6C and `LinSig_PublishAll` 0x9950/0x998B publish tables referenced in asm)
 - [x] ADC read + hardware variant/feature detection + strap coding — `application/adc.c`
 - [x] Flash dual-bank configuration store — `application/nvm.c`
