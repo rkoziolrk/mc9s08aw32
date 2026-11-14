@@ -98,12 +98,261 @@ void Ctrl_Start(void)
  *   Motor_sub_A874 turns the backlight output off
  * Full per-state bodies: reference/application.asm 0xA256-0xA6F8.
  * ====================================================================== */
+/* ---- state-machine variables (absolute addresses preserved) ---------- */
+#define CS        R8(0x023B)          /* current state 0..11            */
+#define RAMP_HI   R8(0x022B)          /* 16-bit ramp/dwell timer hi     */
+#define RAMP_LO   R8(0x022C)
+#define RAMP      ((word)((RAMP_HI << 8) | RAMP_LO))
+#define CMD_POS_LO   R8(0x0291)
+#define CMD_POS_HI   R8(0x0292)
+#define CMD_MODE     R8(0x0293)
+#define CMD_FLAG_A   R8(0x0294)
+#define CMD_FLAG_B   R8(0x0295)
+#define CMD_FLAG_C   R8(0x0296)
+
+void Ctrl_Step(void);   /* [0xA25A] forward decl */
+static void Ctrl_ClearRamp(void) { RAMP_HI = 0; RAMP_LO = 0; }   /* [0xA5AD] */
+
+/* [0xA64E] 1 if the supply voltage is inside the operating window
+ * [cfg 0x016C .. 0x016E] */
+static byte Supply_InWindow(void)
+{
+    if (R8(0x016E) >= g_supplyVoltage && g_supplyVoltage >= R8(0x016C)) {
+        return 1;
+    }
+    return 0;
+}
+
+/* [0xA608] low-voltage edge debounce (counts 0x0235 to 2 once v < cfg 0x016E) */
+static byte Ctrl_VoltLowDeb(void)
+{
+    if (g_supplyVoltage >= R8(0x016E)) return 0;
+    if (R8(0x0235) >= 2) R8(0x0235) = 0; else R8(0x0235)++;
+    return 1;
+}
+
+/* [0xA62B] high-voltage edge debounce (counts 0x0236 once v > cfg 0x016C) */
+static byte Ctrl_VoltHighDeb(void)
+{
+    if (g_supplyVoltage <= R8(0x016C)) return 0;
+    if (R8(0x0236) >= 2) R8(0x0236) = 0; else R8(0x0236)++;
+    return 1;
+}
+
+/* [0xA669] on a debounced voltage edge, branch to the low/high-voltage states */
+static void Ctrl_CheckVoltEdges(void)
+{
+    if (Ctrl_VoltHighDeb() == 1 && R8(0x0236) == 0) CS = 9;
+    if (Ctrl_VoltLowDeb()  == 1 && R8(0x0235) == 0) CS = 10;
+}
+
+/* [0xA894] button-ladder plausibility: sets 0x0240 bit1, and if the ladder
+ * ratio 0x0241/0x0242 >= 8 clears it (implausible). Returns 0x0240. */
+static byte Ctrl_PlausCheck(void)
+{
+    R8(0x0240) |= 0x02;
+    if (R8(0x0242) != 0 && (byte)(R8(0x0241) / R8(0x0242)) >= 0x08) {
+        R8(0x0240) &= (byte)~0x02;
+    }
+    return R8(0x0240);
+}
+
+/* [0xA79F]/[0xA7FA] drive the backlight output to a brightness level
+ * (threshold 0x1A / 0x15); non-zero target arms the PWM output, zero stops it.
+ * The two entries differ only in the window value (0x19 vs 0x14). */
+static void Backlight_SetLevel(byte level, byte window, byte thresh)
+{
+    if (level < thresh) return;                 /* below the minimum */
+    if (level != 0) {
+        R8(0x0245) = 1;                         /* output active */
+        R8(0x0247) = R8(0x0244 + 1);            /* (saved arg) */
+        R8(0x0246) = window;
+        R8(0x0244) = 0;
+        R8(0x0008) |= 0x04;                     /* enable backlight pin */
+        R8(0x000A) &= (byte)~0x10;
+        R8(0x023F) = 0;
+        R8(0x029A) = 0;
+    } else {
+        R8(0x0245) = 0;                         /* output off */
+        R8(0x0008) &= (byte)~0x04;
+    }
+}
+#define Backlight_On19(lvl)  Backlight_SetLevel((lvl), 0x19, 0x1A)   /* [0xA79F] */
+#define Backlight_On14(lvl)  Backlight_SetLevel((lvl), 0x14, 0x15)   /* [0xA7FA] */
+
+/* [0xA855] enter the dwell phase: output off, re-arm the dwell count 0x0243 */
+static void Backlight_Dwell(void)
+{
+    R8(0x0245) = 0;
+    R8(0x0008) &= (byte)~0x04;
+    R8(0x000A) &= (byte)~0x10;
+    R8(0x0243) = 0x04;
+    R8(0x023F) = 0;
+    R8(0x029A) = 0;
+}
+
+/* ======================================================================
+ * Ctrl_Task  [0xA256]   DEVICE: backlight dimming / button-feedback FSM.
+ * Faithful transcription of the 12-state machine (0xA270-0xA6F8).  Each
+ * state gates on the supply-voltage window (Supply_InWindow), the decoded
+ * dimming command (CMD_*), and the ramp/dwell timer, then drives the
+ * backlight output and advances g_ctrlState (CS).
+ * ====================================================================== */
 void Ctrl_Task(void)
 {
-    Ctrl_Step();                    /* [0xA25A] advance the ramp/dwell timer */
-    /* then dispatch g_ctrlState (0x023B) through the 12-entry switch table;
-     * each state ramps brightness toward 0x0229 and advances the sequence.
-     * See reference/application.asm 0xA270-0xA6F8. */
+    byte r;
+
+    Ctrl_Step();                                /* [0xA25A] advance dwell timer */
+
+    if (CS >= 0x0C) { Motor_sub_A874(); CS = 0; return; }   /* [0xA270->A5A3] guard */
+
+    switch (CS) {
+
+    case 0:                                     /* LA299: off / init */
+        Motor_sub_A874();
+        CS = 1;
+        return;
+
+    case 1:                                     /* LA2A4: idle, await command */
+        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (CMD_FLAG_B == 1 && CMD_FLAG_A == 0 && R8(0x029B) == 0) {
+            if (CMD_POS_LO != 0) {
+                Backlight_On19((byte)(CMD_POS_HI + 0x0A));
+            } else {
+                RAMP_LO = 0x0F; RAMP_HI = 0;
+            }
+            CS = 2;
+            Ctrl_ClearRamp();
+            return;
+        }
+        /* LA2E2 */
+        if (CMD_FLAG_C == 1 && R8(0x022A) == 0) CS = 7;
+        if (CMD_FLAG_C != 0) return;
+        R8(0x022A) = 0;
+        return;
+
+    case 2:                                     /* LA305: ramp toward target */
+        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (R8(0x029B) != 0) { CS = 0x0B; Motor_sub_A874(); return; }  /* LA348 fault */
+        if (RAMP < 0x000F) {
+            /* still within the initial dwell */
+        }
+        /* LA32A: fetch the per-mode brightness from config, apply it */
+        R8(0x0229) = g_cfg.raw[0x32 + (CMD_MODE & 0x0F)];
+        Backlight_On14(R8(0x0229));
+        Ctrl_ClearRamp();
+        CS = 3;
+        return;
+
+    case 3:                                     /* LA35C: holding at level */
+        r = Supply_InWindow();
+        if (r != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        /* compare the commanded level 0x0151 (<<2) against the ramp timer */
+        {
+            word lvl = (word)(R8(0x0151) << 2);
+            if ((int)(lvl - RAMP) >= 0 && R8(0x0151) != 0) { /* keep holding */ }
+            if (CMD_FLAG_B != 0 && CMD_FLAG_A != 0 && (--R8(0x029B)) != 0) {
+                return;                         /* loop back into state 3 */
+            }
+        }
+        Motor_sub_A874();
+        Delay_Loop(0xFA);
+        Backlight_Dwell();                      /* [0xA855] */
+        Ctrl_ClearRamp();
+        CS = 4;
+        return;
+
+    case 4:                                     /* LA3AE: dwell + plausibility */
+        if (Supply_InWindow() != 1) { Ctrl_CheckVoltEdges(); return; }
+        r = Ctrl_PlausCheck();                  /* [0xA894] */
+        if (r != 0) {
+            if (r == 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+            if (r == 2) R8(0x023D) = 1;
+            CS = 0x0B; Motor_sub_A874();        /* implausible -> fault */
+            return;
+        }
+        if (RAMP < 0x0032) { Motor_sub_A874(); CS = 6; return; }   /* LA3D8 */
+        if (CMD_FLAG_B != 0) { CS = 6; return; }
+        CS = 5;
+        return;
+
+    case 5:                                     /* LA3FE: step the dimming */
+        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (CMD_FLAG_B != 1) {                  /* LA42B */
+            if (RAMP < 0x0032) return;
+            Motor_sub_A874();
+            CS = 0;
+            return;
+        }
+        Motor_sub_A874();
+        Delay_Loop(0xFA);
+        Backlight_On14((byte)(CMD_POS_HI + 0x0A));
+        Ctrl_ClearRamp();
+        CS = 2;
+        return;
+
+    case 6:                                     /* LA446: wait for release */
+        if (Supply_InWindow() != 1) { Motor_sub_A874(); Ctrl_CheckVoltEdges(); return; }
+        if (CMD_FLAG_B == 0) { CS = 0; Motor_sub_A874(); return; }
+        if (CMD_FLAG_C == 1 && R8(0x022A) == 0) CS = 7;
+        if (CMD_FLAG_C != 0) return;
+        R8(0x022A) = 0;
+        return;
+
+    case 7:                                     /* LA482: self-test / special */
+        if (Supply_InWindow() != 1) { Ctrl_CheckVoltEdges(); return; }
+        if (R8(0x023C) == 0) {
+            if (Motor_sub_A8B6() != 0) {        /* drive self-test ok */
+                if (R8(0x023A) == 2) {          /* LA49E */
+                    Motor_sub_A874(); CS = 0x0B;
+                    R8(0x029B) = 1; R8(0x023A) = 0; R8(0x023C) = 1;
+                    R8(0x02A8) = 7;
+                } else { R8(0x023A)++; }
+            }
+        }
+        r = Ctrl_PlausCheck();
+        if (r & 0x02) { R8(0x023D) = 1; Motor_sub_A874(); CS = 0x0B; }
+        if (r == 0) { Motor_sub_A874(); CS = 6; R8(0x023C) = 0; }
+        R8(0x022A) = 1;
+        return;
+
+    case 8:                                     /* LA47F: (shares state 7 exit) */
+        Ctrl_CheckVoltEdges();
+        return;
+
+    case 9:                                     /* LA4F4: low-voltage handling */
+        if (g_supplyVoltage < R8(0x016D)) { Ctrl_CheckVoltEdges(); return; }
+        if (g_supplyVoltage < R8(0x016E)) {     /* LA51B */
+            if (R8(0x0231) >= 2) { R8(0x0231) = 0; CS = 6; }
+            else R8(0x0231)++;
+            return;
+        }
+        if (R8(0x0232) >= 2) { R8(0x0232) = 0; CS = 0x0A; }   /* LA501 */
+        else R8(0x0232)++;
+        return;
+
+    case 10:                                    /* LA533: high-voltage handling */
+        if (g_supplyVoltage <= R8(0x016F)) return;
+        if (g_supplyVoltage < R8(0x016C)) {     /* LA558 */
+            if (R8(0x0233) >= 2) { R8(0x0233) = 0; CS = 9; }
+            else R8(0x0233)++;
+            return;
+        }
+        if (R8(0x0234) >= 2) { R8(0x0234) = 0; CS = 6; }      /* LA540 */
+        else R8(0x0234)++;
+        return;
+
+    default:                                    /* case 11, LA570: fault recovery */
+        if ((--R8(0x029C)) != 0) { Motor_sub_A874(); return; }
+        if (Motor_sub_A91B() != 0) return;      /* stuck-button / short check */
+        if (R8(0x0237) == 2) {
+            R8(0x02A8) = 0; R8(0x029B) = 0; R8(0x029C) = 0;
+            CS = 6; R8(0x0237) = 0;
+        } else {
+            R8(0x0237)++;
+        }
+        return;
+    }
 }
 
 /* Ctrl_Step [0xA25A] - count the 16-bit ramp/dwell timer 0x022B:0x022C up

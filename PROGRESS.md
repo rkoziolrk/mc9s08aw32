@@ -30,7 +30,7 @@ C sources match the names in the `.asm` listings and `reference/function_index.m
 - [x] Button-input debounce (DEVICE) — `application/fault.c` (`Fault_Init`, `Fault_Task`, `Fault_Debounce` 4-sample shift-register via the 0xC1F8 {port,mask,action} descriptors; action dispatch 0xC1FB referenced in asm)
 - [x] Inputs/signal-state init — `application/inputs.c` (`Inputs_Init` 0xB84D)
 - [x] Reset logging + flash self-test — `application/selftest.c` (`Outputs_Init` 0xBC54 reset-cause counters; `Outputs_Task`/`FlashSelfTest_Step` 0xBCB1 incremental XOR-16 flash check vs 0xCAFE). NOTE: auto-label 'Outputs_*' is a misnomer.
-- [x] Backlight dimming state machine (DEVICE) — `application/motor_control.c` (`Ctrl_Init`, `Ctrl_Start`, `Ctrl_Task`/`Ctrl_Step` 0xA256 12-state map + brightness ramp; inner per-state bodies referenced in asm)
+- [x] Backlight dimming state machine (DEVICE) — `application/motor_control.c` (`Ctrl_Init`, `Ctrl_Start`, `Ctrl_Task`/`Ctrl_Step` 0xA256 — all 12 states fully reconstructed (idle/ramp/hold/dwell/dim-step/release/self-test/low-&-high-voltage/fault) with helpers Supply_InWindow, Backlight_SetLevel, Ctrl_PlausCheck, voltage-edge debounces)
 - [x] Button/output driver (DEVICE) — `application/motor_control.c` (`Motor_Init`, `Motor_Task` level decision tree)
 - [x] Button-ladder/scroll + backlight PWM tick (DEVICE) — `application/motor_control.c` (`MotorPos_Init`, `MotorPos_Isr` 0xA719, `MotorPos_Task`)
 - [x] ADC analogue front-end — `application/sensor.c` (`Sensor_Init` 0xA0E6)
