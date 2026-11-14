@@ -323,87 +323,173 @@ static void LinCrit_Leave(void)
     }
 }
 
+/* ---- shared LIN byte-engine state (zero page) ------------------------- */
+#define g_linBufPtr   (*(byte * volatile *)0x00B2)   /* 16-bit buffer pointer */
+#define g_linCrcH     R8(0x00B4)
+#define g_linCrcL     R8(0x00B5)
+#define g_linByteCnt  R8(0x00B6)
+#define g_linT1       R8(0x00B9)
+#define g_linTpState  R8(0x00B1)
+#define R8(a)         (*(volatile byte *)(a))
+
+extern void LinSched_OnHeader(byte pid);      /* [0x99EC] */
+extern void LinErr_Set(byte code);            /* [0x8DCF] */
+extern void LinErr_Report(byte code, word arg);/* [0x9BA1] */
+extern void LinDiag_Response(byte kind);      /* [0x9AB6] */
+extern void LinSci_RxOn(void);                /* [0x9CCA] */
+extern void Lin_GotoSleep2(void);             /* [0x99EA] */
+extern void LinCrc_Fold(void);                /* [0x9D44] */
+
+/* Accumulate one byte into the running LIN checksum (16-bit sum). */
+static void Lin_CrcAdd(byte b)
+{
+    word s = (word)(g_linCrcL + b);
+    g_linCrcL = (byte)s;
+    g_linCrcH = (byte)(g_linCrcH + (s >> 8));
+}
+
 /* ======================================================================
  * Lin_RxByte  [0x9D62]   (one byte received, called from Isr_Sci1)
  *
- * This is the master receive state machine.  g_linRxState ($B7) selects
- * what the incoming byte means:
- *      0x01  collecting a response data field
- *      0x02  response checksum byte
- *      0x08  diagnostic single/first-frame length
- *      0x09  diagnostic consecutive-frame data
- *      0x80  header: protected identifier (PID) just arrived
- *      0x90  diagnostic request: service id
- *      0xB0  diagnostic request: data byte
- *      0xFF  idle / waiting for the next header
- * The PID is validated against the slave's schedule table; a matching
- * publish frame switches to transmit (Lin_TxByteOrErr drives it), a
- * subscribe frame stays in receive and accumulates the checksum
- * (LinCrc_Fold).  Diagnostic PIDs 0x3C/0x3D enter the transport layer.
- *
- * The full transition table is large; it is reproduced byte-for-byte with
- * comments in reference/application.asm (0x9D62-0x9E74).  The structure
- * below mirrors the top-level dispatch so the control flow is clear.
+ * Master receive/response state machine, selected by g_linRxState ($B7).
+ * Note the half-duplex trick: while publishing (state 0x01) each byte we
+ * put on the single-wire LIN bus loops back as a received byte, and that
+ * is what clocks out the next byte here.
  * ====================================================================== */
 static void Lin_RxByte(byte data)
 {
-    extern void LinSched_OnHeader(byte pid);  /* [0x99EC] */
-    extern void LinErr_Set(byte code);        /* [0x8DCF] */
-
-    *(volatile byte *)0x00B9 = 0x43;          /* re-arm response timer */
+    g_linT1 = 0x43;                           /* re-arm response timer */
 
     switch (g_linRxState) {
-    case 0x01:  /* response data byte: store, fold into checksum           */
-    case 0x02:  /* response checksum byte: verify, finish the frame        */
-    case 0x08:  /* diag single/first frame length                          */
-    case 0x09:  /* diag consecutive frame data                             */
-    case 0x80:  /* a PID byte: classify and set up the frame               */
+
+    case 0x01:  /* PUBLISH: verify our own looped-back byte, send the next */
+        if (*g_linBufPtr != data) {
+            LinErr_Report(0x11, 0);           /* bus readback mismatch */
+            LinSci_RxOn();
+            g_linTpState = 0x0F;
+            return;
+        }
+        if (--g_linByteCnt != 0) {            /* more data bytes to send */
+            g_linBufPtr++;
+            Sci_SendByte(*g_linBufPtr);
+            Lin_CrcAdd(*g_linBufPtr);
+        } else {                              /* all data sent: send checksum */
+            LinCrc_Fold();
+            Sci_SendByte((byte)~g_linCrcL);
+            g_linRxState = 0x02;
+        }
+        return;
+
+    case 0x02:  /* PUBLISH: checksum byte looped back */
+        LinSci_RxOn();
+        g_linTpState = 0x0F;
+        if ((byte)~g_linCrcL == data) {
+            LinDiag_Response(2);              /* response complete */
+        } else {
+            LinErr_Report(0x11, 0);
+        }
+        return;
+
+    case 0x08:  /* DIAGNOSTIC receive: data byte */
+        g_linByteCnt &= 0x7F;
+        if (g_linByteCnt == 0) {
+            LinErr_Set(0x0B);
+        }
+        Lin_CrcAdd(data);
+        *g_linBufPtr = data;
+        g_linBufPtr++;
+        if (--g_linByteCnt == 0) {
+            g_linRxState = 0x09;             /* next byte is the checksum */
+        }
+        return;
+
+    case 0x09:  /* DIAGNOSTIC receive: checksum byte */
+        LinSci_RxOn();
+        g_linTpState = 0x0F;
+        LinCrc_Fold();
+        if ((byte)~g_linCrcL == data) {
+            LinDiag_Response(1);
+        } else {
+            LinErr_Report(0x14, 0);          /* checksum error */
+        }
+        return;
+
+    case 0x80:  /* (idle in the RX direction) */
+        return;
+
+    case 0x90:  /* diagnostic: expect the 0x55 after the request PID */
+        if (data == 0x55) {
+            g_linRxState = 0xB0;
+        } else {
+            LinErr_Report(0x03, 0);
+            LinSci_RxOn();
+            g_linTpState = 0x0F;
+        }
+        return;
+
+    case 0xB0:  /* diagnostic request: NAD / first byte */
+        R8(0x01D6) = data;
         LinSched_OnHeader(data);
-        break;
-    case 0x90:  /* diag request service id                                 */
-    case 0xB0:  /* diag request data byte                                  */
-        LinSched_OnHeader(data);
-        break;
-    case 0xFF:  /* idle: the byte after BREAK+SYNC must be the PID         */
-        LinSched_OnHeader(data);
-        break;
+        return;
+
+    case 0xFF:  /* idle: bus activity -> run the go-to-sleep supervision */
+        LinSci_RxOn();
+        Lin_GotoSleep2();
+        return;
+
     default:
-        LinErr_Set(0x0B);                     /* unexpected byte           */
-        break;
+        LinErr_Set(0x0B);                     /* unexpected byte */
+        return;
     }
 }
 
 /* ======================================================================
- * Lin_TxByteOrErr  [0x9E75]
- * Mirror of Lin_RxByte for the transmit / error direction: a BREAK (event
- * 2), a transmitter-ready condition or a bus error (events 3/4) is fed in
- * and the state machine either sends the next byte of a publish frame
- * (Sci_SendByte), advances the diagnostic response, or aborts the frame
- * and flags the error.  Full table: reference/application.asm 0x9E75.
+ * Lin_TxByteOrErr  [0x9E75]  (bus BREAK / error handler)
+ *
+ * Called from Isr_Sci1 with event = 2 for a detected LIN BREAK, or 3/4 for
+ * an overrun / framing error.  It flags the appropriate protocol error for
+ * the current state and, on a BREAK (event 2), re-arms the receiver for the
+ * next diagnostic request header (state 0x90).
  * ====================================================================== */
 static void Lin_TxByteOrErr(byte event)
 {
-    extern void LinErr_Report(byte a, word arg);  /* [0x9BA1] */
-    extern void LinErr_Set(byte code);            /* [0x8DCF] */
-
-    *(volatile byte *)0x00B9 = 0x43;              /* re-arm response timer */
+    g_linT1 = 0x43;
 
     switch (g_linRxState) {
     case 0x01: case 0x02:
-        LinErr_Report(0x12, 0x0000);
+        LinErr_Report(0x12, 0);              /* publish interrupted */
         break;
     case 0x08: case 0x09:
-        /* diagnostic frame byte timing */
-        break;
-    case 0x80: case 0x90: case 0xB0:
-        /* header / diagnostic request progression */
+        if (event == 2) {
+            LinErr_Report((g_linByteCnt & 0x80) ? 0x15 : 0x13, 0);
+            goto rearm;
+        }
+        LinErr_Report(0x13, 0);
+        LinSci_RxOn();
+        g_linTpState = 0x0F;
+        return;
+    case 0x80:
+        if (event != 2) return;
+        break;                                /* break -> rearm below */
+    case 0x90: case 0xB0:
+        LinErr_Report(0x07, 0);
         break;
     case 0xFF:
-        /* idle */
-        break;
+        LinSci_RxOn();
+        Lin_GotoSleep2();
+        return;
     default:
         LinErr_Set(0x0B);
-        break;
+        return;
     }
-    (void)event;
+
+    if (event == 2) {                         /* BREAK: start a new frame */
+rearm:
+        g_linRxState  = 0x90;
+        R8(0x01D4)    = 0x04;
+        g_linTpState  = 0x11;
+    } else {
+        LinSci_RxOn();
+        g_linTpState = 0x0F;
+    }
 }
