@@ -115,3 +115,9 @@ pull-down fixed — invert: `R = Rpd·(1−k)/k`.)
 * **Variants that support steering-wheel heating (bit 0x02): 2, 4, 9 and
   0x0B.**  Of these, variant 9 is the full-featured one (heating *and*
   scroll *and* all buttons).
+
+## Pinout
+
+The 44-pin LQFP package pin assignment and the ADC channel→pin usage are in
+[`reference/pinout.md`](reference/pinout.md) — the variant-coding ADC is on
+`PTD3` (AD1P11) = pin 32.
