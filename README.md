@@ -149,7 +149,7 @@ rather than fully inlined in C:
 | Steering-wheel heating, supply monitor, diagnostics, inputs, reset-log/self-test | reconstructed C (`heating.c`, `supply.c`, `diag.c`, `inputs.c`, `selftest.c`) |
 | Flash dual-bank config store, GPIO, runtime helpers, delay | reconstructed C (`nvm.c`, `ports.c`, `runtime.c`, `util.c`) |
 | Bootloader: reset/launch, command loop, SCI, CRC, reflash handlers | reconstructed C (`bootloader/`) |
-| Deepest table bodies: heating-curve interpolation, per-button action handlers, `crt0` copy | C summary + byte-exact `reference/*.asm` |
+| Heating-curve interpolation, supply brightness compensation, aux-channel sampling, crt0 copy, status bit-packing | reconstructed C (full) |
 
 Every routine — reconstructed or not — appears in
 `reference/function_index.md` with its address, name and purpose, and in the

@@ -212,9 +212,52 @@ void LinSig_BuildStatus(void)
     else                    { R8(0x029E) = 0; }
     R8(0x0279) = R8(0x029F + R8(0x029E));
 
-    /* The full bit-merge assembly of 0x01C1..0x01C4 follows the per-bit map
-     * above; it is reproduced byte-exactly in reference/application.asm
-     * (0x8FE3-0x9117).  The structure is a sequence of
-     *    C = (C & ~mask) | (align(src) & mask)
-     * merges, gated by g_featureFlags for the optional bytes. */
+    /* ---- data byte 0x01C1: bit-merge of individual state bits --------- *
+     * Each bit is C1 = (C1 & ~(1<<n)) | (srcbit << n). Source map from
+     * reference/application.asm 0x9000-0x908A. */
+    {
+        byte c = R8(0x01C1);
+        c = (byte)((c & ~0x01) | ((R8(0x02C4) & 0x01) ? 0x01 : 0));
+        c = (byte)((c & ~0x02) | ((R8(0x02C2) & 0x01) ? 0x02 : 0));
+        c = (byte)((c & ~0x04) | ((R8(0x02C1) & 0x01) ? 0x04 : 0));
+        c = (byte)((c & ~0x08) | ((R8(0x02BF) & 0x01) ? 0x08 : 0));
+        c = (byte)((c & ~0x10) | ((R8(0x027F) & 0x01) ? 0x10 : 0));
+        c = (byte)((c & ~0x20) | ((R8(0x0280) & 0x01) ? 0x20 : 0));
+        c = (byte)((c & ~0x40) | ((R8(0x0281) & 0x01) ? 0x40 : 0));
+        c = (byte)((c & ~0x80) | ((R8(0x0282) & 0x80) ? 0x80 : 0));
+        R8(0x01C1) = c;
+    }
+
+    /* ---- data byte 0x01C2: feature-gated bits (asm 0x908B-0x90F3) ----- */
+    {
+        byte c = R8(0x01C2);
+        if (g_featureFlags & FEAT_BIT0) {
+            c = (byte)((c & ~0x01) | ((R8(0x0283) & 0x01) ? 0x01 : 0));
+            c = (byte)((c & ~0x02) | ((R8(0x0284) & 0x01) ? 0x02 : 0));
+        } else {
+            c = (byte)(c & 0xFC);
+        }
+        if (g_featureFlags & FEAT_HEATER) {
+            c = (byte)((c & ~0x08) | ((R8(0x02C3) & 0x01) ? 0x08 : 0));
+            c = (byte)((c & ~0x40) | ((R8(0x02C3) & 0x10) ? 0x40 : 0));
+        } else {
+            c = (byte)(c & 0xB7);
+        }
+        c = (byte)((c & ~0x80) | ((R8(0x02C0) & 0x80) ? 0x80 : 0));
+        R8(0x01C2) = c;
+    }
+
+    /* ---- data byte 0x01C3: two nibbles (asm 0x90F6-0x9117) ------------ */
+    {
+        byte c = R8(0x01C3);
+        if (R8(0x02D1) == 0) {
+            c = (byte)((c & 0xF0) | (R8(0x02D4) & 0x0F));
+        }
+        c = (byte)((c & 0x0F) | ((R8(0x02D5) << 4) & 0xF0));
+        R8(0x01C3) = c;
+    }
+
+    /* ---- data byte 0x01C4: 0x46 when the heater feature is present, else 0xFF */
+    R8(0x01C4) = (byte)((g_featureFlags & FEAT_HEATER) ? 0x46 : 0xFF);
+    (void)v;
 }

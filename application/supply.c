@@ -123,8 +123,34 @@ void Supply_Task(void)
  * ====================================================================== */
 static void Supply_SampleAux(byte channel)
 {
-    /* Descriptor-table driven; see reference/application.asm 0xBA90-0xBB18.
-     * Kept as a documented reference because it indexes two parallel flash
-     * tables of {port pointer, mask} pairs that are easier to read there. */
-    (void)channel;
+    /* Per-channel descriptor is 6 bytes at 0xC237 + channel*6:
+     *   [0:1] port1 register pointer   [2] mask1
+     *   [3:4] port2 register pointer   [5] mask2
+     * (so the firmware's parallel bases are C237=ptr1, C239=mask1,
+     *  C23A=ptr2, C23C=mask2). The channel result is stored at 0x02DF[ch].
+     * Two-point debounced read: sample port1&mask1, wait g_tempCode, sample
+     * again; if stable AND port2&mask2 also matches its expected level,
+     * the channel reads as 1. Reconstructed from asm 0xBA90-0xBB18. */
+    const byte *desc = (const byte *)(word)(0xC237 + (word)channel * 6);
+    volatile byte *port1 = (volatile byte *)(word)(((word)desc[0] << 8) | desc[1]);
+    byte  mask1 = desc[2];
+    volatile byte *port2 = (volatile byte *)(word)(((word)desc[3] << 8) | desc[4]);
+    byte  mask2 = desc[5];
+    byte  first1, exp1, exp2, result = 0;
+
+    *(volatile byte *)(0x02DF + channel) = 0;
+
+    first1 = (byte)(*port1 & mask1);
+    exp1   = first1;                         /* first reading of port1       */
+    exp2   = (byte)(*port2 & mask2);         /* expected level of port2      */
+
+    Delay_Loop(g_tempCode);                  /* debounce interval            */
+
+    if ((byte)(*port1 & mask1) == exp1) {    /* port1 stable                 */
+        if ((byte)(*port2 & mask2) == exp2) {/* port2 matches                */
+            result = 1;
+        }
+    }
+    *(volatile byte *)(0x02DF + channel) = result;
+    (void)first1;
 }

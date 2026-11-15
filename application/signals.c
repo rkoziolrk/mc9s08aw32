@@ -91,5 +91,7 @@ void Signals_Task(void)
         v = (word)(((word)R8(0x025E) << 8) + R8(0x025F));
         if (v != 0 && v < 0xFFFF) { v++; R8(0x025E) = (byte)(v >> 8); R8(0x025F) = (byte)v; }
     }
-    /* remaining counters: see reference/application.asm 0xAE8B-0xAF20. */
+    /* final up-counter (0x0260), saturating at 0xFFFF */
+    v = (word)(((word)R8(0x0260) << 8) + R8(0x0261));
+    if (v != 0 && v < 0xFFFF) { v++; R8(0x0260) = (byte)(v >> 8); R8(0x0261) = (byte)v; }
 }
