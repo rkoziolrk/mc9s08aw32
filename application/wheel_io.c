@@ -26,6 +26,7 @@
 #include "app.h"
 
 #define R8(a)  (*(volatile byte *)(a))
+#define FLASH8(a) (*(const volatile byte *)(a))
 
 extern void Output_Stop(void);   /* [0xA874] set up the H-bridge/PWM pins */
 extern byte Ladder_Reset(void);   /* [0xA88F] read end-stop / hall inputs   */
@@ -370,12 +371,50 @@ void Backlight_StepTimer(void)
 
 /* ======================================================================
  * Backlight_SupplyStep  [0xA13A]
- * Controller sub-step called from Supply_Task after each supply reading
- * (slew-rate updates of the two accumulators 0x02B4/0x02B5).  See asm.
+ * Supply-voltage compensation of the backlight level, called from
+ * Supply_Task after each supply reading.  It computes a 16-bit compensated
+ * brightness into 0x02B4:0x02B5 (the value the PWM stage uses) from the
+ * requested level 0x02B2 and the measured g_supplyVoltage, and sets the
+ * "updated" flag 0x02B3.
+ *
+ * Two modes, selected by cfg[0x4A] (0x016A):
+ *  - mode != 1 (the scaling path): only when supply >= cfg[0x4C] (0x016C)
+ *    or the requested level >= 3.  brightness = level * ((supply*0x5A6 -
+ *    0x1A) / 0x40); if that 32-bit product reaches the limit at flash
+ *    0xC1F5 it is clamped to 0xC8.  (Fixed-point via mul16/div16/cmp32;
+ *    exact sequence reference/application.asm 0xA14F-0xA199.)
+ *  - mode == 1 (the doubling path, 0xA19B): gated by 0x02B1 and the
+ *    cfg[0x4D] (0x016D) supply threshold; brightness = level << 1.
  * ====================================================================== */
 void Backlight_SupplyStep(void)
 {
-    /* see reference/application.asm 0xA13A-0xA1E5. */
+    byte  level = R8(0x02B2);
+    word  bright;
+
+    R8(0x02B3) = 0;
+
+    if (g_supplyVoltage >= R8(0x016C) || level >= 3) {
+        if (R8(0x016A) != 1) {                     /* scaling path */
+            /* compensated = level * ((supply*0x5A6 - 0x1A) / 0x40) */
+            word factor = (word)((mul16(g_supplyVoltage, 0x05A6) - 0x1A) / 0x40);
+            bright = mul16(level, factor);
+            /* 32-bit limit at flash 0xC1F5 -> clamp high to 0xC8 */
+            if (bright >= (word)((FLASH8(0xC1F5) << 8) | FLASH8(0xC1F6))) {
+                R8(0x02B4) = 0xC8;
+                R8(0x02B5) = 0x00;
+            } else {
+                R8(0x02B4) = (byte)(bright >> 8);
+                R8(0x02B5) = (byte)bright;
+            }
+        } else {                                   /* mode 1: doubling path */
+            if (R8(0x02B1) != 1 || g_supplyVoltage >= R8(0x016D)) {
+                R8(0x02B4) = (byte)(level << 1);
+                R8(0x02B5) = 0x00;
+                R8(0x02B1) = 0;
+            }
+        }
+    }
+    R8(0x02B3) = 1;
 }
 
 /* ======================================================================

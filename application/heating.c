@@ -57,18 +57,50 @@ void Heating_Task(void)
 
 /* ======================================================================
  * Heating_Curve  [0xB707]
- * Maps the filtered sensor value to a heater output setting using a
- * two-column breakpoint table (passed by pointer in the original: a list
- * of {input, output} pairs that it searches and linearly interpolates
- * between).  Returns the resulting output/fault code written by the
- * caller.  The table walk and the linear interpolation are intricate
- * fixed-point code; see reference/application.asm 0xB707-0xB7A... for the
- * byte-exact sequence.  The behavioural contract is: find the pair whose
- * input brackets the argument, interpolate the output, and clamp at the
- * table ends.
+ * Piecewise-linear lookup over a breakpoint table of {x,y} byte pairs
+ * (the table pointer is the argument; entries are 2 bytes and are walked
+ * with +2).  Finds the segment [p-1, p] whose x values bracket the input,
+ * then interpolates:
+ *     y = y_prev + (x - x_prev) * (y_cur - y_prev) / (x_cur - x_prev)
+ * using the 16-bit mul16/div16 helpers.  Clamps to the first entry's y
+ * when the input is below the first breakpoint (the 0xB7AB tail), and to
+ * the last segment at the top end.  Reconstructed from
+ * reference/application.asm 0xB707-0xB7B6.
+ *
+ * Table format: table[0]=x0, table[1]=y0, table[2]=x1, table[3]=y1, ...
+ * The caller's end marker is reached when x_cur does not advance past the
+ * input (0xB730 test), i.e. the final pair.
  * ====================================================================== */
 byte Heating_Curve(byte *table, byte x)
 {
-    (void)table; (void)x;
-    return 0;   /* see asm for the exact interpolation */
+    byte x_prev, y_prev, x_cur, y_cur;
+    int  dy, dx;
+
+    /* below the first breakpoint -> clamp to its y (asm LB7AB) */
+    if (x < table[0]) {
+        return table[1];
+    }
+
+    /* walk pairs until x_cur >= x (or the table ends) */
+    for (;;) {
+        x_prev = table[0];
+        y_prev = table[1];
+        if (table[0] >= x) {
+            break;                         /* exact / first bracket */
+        }
+        x_cur = table[2];
+        y_cur = table[3];
+        if (x_cur >= x) {
+            /* input falls in [x_prev, x_cur] -> interpolate */
+            dy = (int)y_cur - (int)y_prev;
+            dx = (int)x_cur - (int)x_prev;
+            if (dx == 0) {
+                return y_prev;
+            }
+            return (byte)(y_prev + (int)mul16((word)(x - x_prev), (word)dy) / dx);
+        }
+        table += 2;                        /* next segment */
+    }
+    (void)x_prev;
+    return y_prev;                         /* at/after a breakpoint */
 }

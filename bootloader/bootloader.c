@@ -121,9 +121,31 @@ void Boot_Reset(void)
  * ====================================================================== */
 static void Boot_StartupCopy(void)
 {
-    /* Equivalent to the compiler's ROM-to-RAM data init; the exact record
-     * walk is in the asm.  Left documented because a C rewrite of crt0 is
-     * toolchain specific. */
+    /* CodeWarrior _startupData walk (reference/bootloader.asm 0xF41C-0xF470).
+     * The ROM table at 0xFE2A is a list of 5-byte records; a record whose
+     * flag byte (offset 2) has bits 0x60 set is a zero-fill, otherwise it
+     * copies 'count' bytes from the record's ROM source to its RAM dest. A
+     * record with a zero count/flag terminates the table. */
+    const byte *rec = (const byte *)0xFE2A;
+
+    for (;;) {
+        word count = (word)(((word)rec[0] << 8) | rec[1]);  /* big-endian */
+        byte flag  = rec[2];
+        if (count == 0 && flag == 0) {
+            break;                                          /* end of table */
+        }
+        if (flag & 0x60) {
+            /* zero-fill record: dest at rec[3:4] */
+            byte *dst = (byte *)(word)(((word)rec[3] << 8) | rec[4]);
+            while (count--) *dst++ = 0;
+        } else {
+            /* copy record: dest rec[3:4], source follows (rec[5:6]) */
+            byte *dst       = (byte *)(word)(((word)rec[3] << 8) | rec[4]);
+            const byte *src = (const byte *)(word)(((word)rec[5] << 8) | rec[6]);
+            while (count--) *dst++ = *src++;
+        }
+        rec += 5;
+    }
 }
 
 /* ======================================================================
