@@ -84,18 +84,26 @@ value (it is on the board), so the absolute ohms depend on the pull-up
 `R@4k7` is the nominal coding resistor if `Rpu = 4.7 kΩ`
 (`R = Rpu·k/(1−k)`).
 
-| Variant | flags | ADC window | U window [V] | U centre | k (centre) | R @ Rpu=4.7k |
-|--------:|:-----:|:----------:|:------------:|:--------:|:----------:|:------------:|
-| 1  | 0x00 | 0x11–0x18 | 0.33–0.49 | 0.41 | 0.082 | ~0.42 kΩ |
-| 2  | 0x02 | 0x1D–0x25 | 0.57–0.75 | 0.65 | 0.129 | ~0.70 kΩ |
-| 3  | 0x01 | 0x2A–0x33 | 0.82–1.02 | 0.92 | 0.184 | ~1.06 kΩ |
-| 4  | 0x03 | 0x39–0x43 | 1.12–1.33 | 1.22 | 0.243 | ~1.51 kΩ |
-| 7  | 0x08 | 0x6A–0x76 | 2.08–2.33 | 2.20 | 0.439 | ~3.68 kΩ |
-| 8  | 0x09 | 0x7C–0x89 | 2.43–2.71 | 2.57 | 0.514 | ~4.97 kΩ |
-| **9** | **0x0F** | 0x8E–0x9D | 2.78–3.10 | 2.94 | 0.588 | ~6.71 kΩ |
-| 0x0A | 0x0C | 0xA3–0xB1 | 3.20–3.49 | 3.33 | 0.667 | ~9.40 kΩ |
-| 0x0B | 0x0B | 0xB7–0xC8 | 3.59–3.94 | 3.76 | 0.753 | ~14.3 kΩ |
-| (none) | — | outside all | — | — | — | → `g_testMode` (fault) |
+| Variant | flags | ADC window | U window [V] | U centre | k (centre) | R @ Rpu=4.7k | Equipment (features) |
+|--------:|:-----:|:----------:|:------------:|:--------:|:----------:|:------------:|:---------------------|
+| 1  | 0x00 | 0x11–0x18 | 0.33–0.49 | 0.41 | 0.082 | ~0.42 kΩ | base buttons |
+| 2  | 0x02 | 0x1D–0x25 | 0.57–0.75 | 0.65 | 0.129 | ~0.70 kΩ | base + **heating** |
+| 3  | 0x01 | 0x2A–0x33 | 0.82–1.02 | 0.92 | 0.184 | ~1.06 kΩ | base + extended buttons |
+| 4  | 0x03 | 0x39–0x43 | 1.12–1.33 | 1.22 | 0.243 | ~1.51 kΩ | extended buttons + **heating** |
+| 7  | 0x08 | 0x6A–0x76 | 2.08–2.33 | 2.20 | 0.439 | ~3.68 kΩ | base (coding bit only) |
+| 8  | 0x09 | 0x7C–0x89 | 2.43–2.71 | 2.57 | 0.514 | ~4.97 kΩ | extended buttons |
+| **9** | **0x0F** | 0x8E–0x9D | 2.78–3.10 | 2.94 | 0.588 | ~6.71 kΩ | extended buttons + **heating** + scroll/backlight — **full** |
+| 0x0A | 0x0C | 0xA3–0xB1 | 3.20–3.49 | 3.33 | 0.667 | ~9.40 kΩ | scroll wheel + backlight dimming |
+| 0x0B | 0x0B | 0xB7–0xC8 | 3.59–3.94 | 3.76 | 0.753 | ~14.3 kΩ | extended buttons + **heating** |
+| (none) | — | outside all | — | — | — | → `g_testMode` (fault) | — (coding fault) |
+
+Equipment legend (derived from the feature bits): *base buttons* = the
+always-present resistor-ladder + GPIO buttons and LIN; *extended buttons* =
+bit 0x01 (extra button inputs + signals); *heating* = bit 0x02 (steering-
+wheel heating: NTC + heated-element output, and its button); *scroll/
+backlight* = bit 0x04 (roll/scroll wheel + adjustable backlight dimming).
+Bit 0x08 is a coding/identity bit only (no extra equipment). So variant 9
+(0x0F) is fully equipped, and heating is present on variants 2, 4, 9 and 0x0B.
 
 (If the divider is the other way round — coding resistor to +5 V and the
 pull-down fixed — invert: `R = Rpd·(1−k)/k`.)
