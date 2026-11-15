@@ -69,7 +69,7 @@ void LinSignals_Refresh(void)
  * Maintains the "time since event" counters attached to the published
  * status signals: some count down to zero (0x0267, 0x026B) and some count
  * up with saturation at 0xFFFF (0x0268, 0x026C, and 0x025C/0x025E when
- * FEAT_BIT0 is set).  These counters time the LIN status/age signals.
+ * FEAT_OPT_BUTTONS is set).  These counters time the LIN status/age signals.
  * The full set continues in reference/application.asm 0xAE36-0xAF20.
  * ====================================================================== */
 void Signals_Task(void)
@@ -85,7 +85,7 @@ void Signals_Task(void)
     v = (word)(((word)R8(0x026C) << 8) + R8(0x026D));
     if (v != 0 && v < 0xFFFF) { v++; R8(0x026C) = (byte)(v >> 8); R8(0x026D) = (byte)v; }
 
-    if (g_featureFlags & FEAT_BIT0) {
+    if (g_featureFlags & FEAT_OPT_BUTTONS) {
         v = (word)(((word)R8(0x025C) << 8) + R8(0x025D));
         if (v != 0 && v < 0xFFFF) { v++; R8(0x025C) = (byte)(v >> 8); R8(0x025D) = (byte)v; }
         v = (word)(((word)R8(0x025E) << 8) + R8(0x025F));

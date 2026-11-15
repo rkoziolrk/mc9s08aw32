@@ -23,12 +23,12 @@ slave** that:
 
 | File / symbol | **Function** |
 |---------------|--------------|
-| `adc.c` `Adc_DetectVariant` (ch 0x0B) | **steering-wheel coding** — which button set / wheel type is fitted; selects the feature set |
+| `adc.c` `Adc_DetectVariant` (ch 0x0B) | **start-up option coding** — one read of the ch 0x0B rail → `g_featureFlags` (which options are fitted); see the coding section below |
 | `adc.c` `Adc_Read` (ch 2) | reads the **button resistor ladder** voltage |
 | `wheel_io.c` `Backlight_*` | the **backlight dimming** state machine (brightness ramp toward the commanded level) |
 | `wheel_io.c` `Scan_Isr` (1 ms) | **button-ladder / scroll sampling + backlight PWM update** tick |
 | `wheel_io.c` `Ladder_*` 0x0241/0x0242 | **button-ladder reference / threshold levels** (per-button calibration) |
-| `wheel_io.c` `Output_SelfTest` / `Output_StallCheck` | **ladder plausibility / stuck-button / short detection** (current vs feedback) |
+| `wheel_io.c` `Output_SelfTest` / `Output_StallCheck` | drive **PTE2 (pin 10, a NO-CONNECT on this board)** and read ADC ch 0x0A/0x02 → fault code; validates no real load here (vestigial/generic actuator stage) |
 | `wheel_io.c` `Ramp_Limit` (0xB667) | **backlight brightness fade** (and supply filtering) — slew-rate limiter |
 | `main.c` `Tpm1_Init` (TPM1 CH1 PWM) | **backlight LED PWM** (brightness) |
 | `heating.c` `Heating_*` | **steering-wheel heating** — NTC on ADC ch 3 (open/short detect) + ramped output (feature bit 0x02) |
@@ -51,73 +51,96 @@ slave** that:
 Everything else in `README.md` (memory map, bootloader, build, coverage)
 still applies; this file only corrects *what the firmware is for*.
 
-## Hardware-variant coding (resistor on ADC ch 0x0B)
+## Start-up option coding (ADC ch 0x0B + digital straps)
 
-The steering-wheel variant is identified by a **coding resistor** (a voltage
-divider) on **ADC channel 0x0B**.  At start-up `Adc_DetectVariant` (0xBEC7)
-takes one 8-bit reading and classifies it into a window; each window maps to
-a variant number and a feature bitmask `g_featureFlags` (0x0299).  A reading
-outside every window sets `g_testMode` (coding fault, features disabled).
+At power-up `Adc_DetectVariant` (0xBEC7) takes **one** 8-bit reading of ADC
+channel **0x0B** and classifies it into discrete windows.  The only value
+used afterwards is the feature bitmask **`g_featureFlags`** (0x0299).
 
-### Feature bits (`g_featureFlags`)
+> **Not a stored variant id.** The function also writes `g_variantCode`
+> (0x02EC) and `g_variantSub` (0x02EB), but **nothing in the image ever reads
+> them** — they are dead/diagnostic.  There is no enumerated "variant number";
+> only the feature *bits* drive behaviour.  A reading outside every window
+> sets `g_testMode` (0x02EA) and the gated subsystems stay off.
 
-Verified from every gate in the code:
+**Physical source (board-level).** Channel 0x0B = AD11 = **PTD3 = pin 32**.
+On this board that pin is wired, through series resistors, to the **common
+emitter of the TCUT1350X01** transmissive optical sensor (the scroll-wheel
+quadrature encoder).  The boot read therefore samples the *resting DC level*
+of that rail; whichever window it lands in (set by the series-resistor network
+/ which options are populated) selects the feature set.  This is best read as
+**option/presence detection at power-up**, not a coding-resistor "variant id";
+the exact divider topology on that rail is not provable from the firmware.  A
+second, digital leg of the coding — `Variant_ReadStraps` (0xBFA7) — samples
+strap pins via the table at flash 0xC245 into `g_codingByte` (0x0298), used by
+the LIN identification signals.
 
-| Bit | Enables |
-|-----|---------|
-| 0x01 | extra button inputs + their LIN signals (`Buttons_Scan`, `Signals_Task`) |
-| 0x02 | **steering-wheel heating** — `Heating_Init`/`Heating_Task` (NTC on ADC ch 3 with open/short detection + ramped output) and its signals |
-| 0x04 | scroll/roll-wheel + backlight-dimming (`Backlight_*`/`Scan_*` in wheel_io.c) |
-| 0x08 | a coding/identity bit only — gates no code path, just reported on LIN |
+### Feature bits (`g_featureFlags`) — verified from every gate
 
-> The "heating" meaning of bit 0x02 is a reverse-engineering inference (no
-> text strings in the image), but well grounded: the bit enables an NTC
-> input with open/short detection driving a ramped output — the classic
-> steering-wheel heater (element + temperature sensor) arrangement.
+| Bit | Enables | Evidence (gate sites) |
+|-----|---------|-----------------------|
+| **0x01** `FEAT_OPT_BUTTONS` | optional button positions **4,5,8,9** in `Buttons_Scan` (without it those four are skipped) + their LIN signals | AA45, AD0C/AE66, 908B, B8EA |
+| **0x02** `FEAT_HEATER` | steering-wheel **heating**: `Heating_Task` (NTC on ch 0x03), output loop `sub_AF21`, LIN RX init + status | 87B8, 88E8/890D, 8EF5/8FFD/90B6, AFBC..B2D3, B913 |
+| **0x04** `FEAT_SCROLL` | **scroll/roll wheel + illumination controller**: gates `Scan_Init` + `Backlight_Start` at boot and their 10-tick tasks | 87A6, 88A8/891C, B902 |
+| **0x08** `FEAT_RESERVED` | **nothing** — set in some windows but no code path tests it | (no gate site anywhere) |
 
-### Variant table
+> Bit 0x01 is firm (it selectively enables four otherwise-ignored button
+> positions).  0x02 (heating) and 0x04 (scroll) are reverse-engineering
+> inferences — no strings in the image — but well grounded: 0x02 enables an
+> NTC + ramped-output chain (classic heated wheel), 0x04 enables the encoder
+> scan + illumination controller.  0x08 is set in several windows yet is
+> never tested, so it carries no equipment.
 
-8-bit ADC, assuming **Vref = 5.0 V** (so U = code/255 × 5 V).  The coding
-resistor is read as a divider; the firmware does not contain the pull-up
-value (it is on the board), so the absolute ohms depend on the pull-up
-`Rpu`.  The window ratio `k = code/255 = R/(R + Rpu)` is pull-up-independent;
-`R@4k7` is the nominal coding resistor if `Rpu = 4.7 kΩ`
-(`R = Rpu·k/(1−k)`).
+### Coding windows (ADC ground truth)
 
-| Variant | flags | ADC window | U window [V] | U centre | k (centre) | R @ Rpu=4.7k | Equipment (features) |
-|--------:|:-----:|:----------:|:------------:|:--------:|:----------:|:------------:|:---------------------|
-| 1  | 0x00 | 0x11–0x18 | 0.33–0.49 | 0.41 | 0.082 | ~0.42 kΩ | base buttons |
-| 2  | 0x02 | 0x1D–0x25 | 0.57–0.75 | 0.65 | 0.129 | ~0.70 kΩ | base + **heating** |
-| 3  | 0x01 | 0x2A–0x33 | 0.82–1.02 | 0.92 | 0.184 | ~1.06 kΩ | base + extended buttons |
-| 4  | 0x03 | 0x39–0x43 | 1.12–1.33 | 1.22 | 0.243 | ~1.51 kΩ | extended buttons + **heating** |
-| 7  | 0x08 | 0x6A–0x76 | 2.08–2.33 | 2.20 | 0.439 | ~3.68 kΩ | base (coding bit only) |
-| 8  | 0x09 | 0x7C–0x89 | 2.43–2.71 | 2.57 | 0.514 | ~4.97 kΩ | extended buttons |
-| **9** | **0x0F** | 0x8E–0x9D | 2.78–3.10 | 2.94 | 0.588 | ~6.71 kΩ | extended buttons + **heating** + scroll/backlight — **full** |
-| 0x0A | 0x0C | 0xA3–0xB1 | 3.20–3.49 | 3.33 | 0.667 | ~9.40 kΩ | scroll wheel + backlight dimming |
-| 0x0B | 0x0B | 0xB7–0xC8 | 3.59–3.94 | 3.76 | 0.753 | ~14.3 kΩ | extended buttons + **heating** |
-| (none) | — | outside all | — | — | — | → `g_testMode` (fault) | — (coding fault) |
+The window edges below are exactly the compares in the firmware; `flags` is
+the `g_featureFlags` value each window latches.  (8-bit ADC; at Vref = 5.0 V,
+U ≈ code/255 × 5 V — given only as a rough level.  Back-computed resistor
+values are **omitted on purpose**: the rail is the TCUT1350X01 emitter
+network, not a plain coding divider, so any ohm figure would be guesswork.)
 
-Equipment legend (derived from the feature bits): *base buttons* = the
-always-present resistor-ladder + GPIO buttons and LIN; *extended buttons* =
-bit 0x01 (extra button inputs + signals); *heating* = bit 0x02 (steering-
-wheel heating: NTC + heated-element output, and its button); *scroll/
-backlight* = bit 0x04 (roll/scroll wheel + adjustable backlight dimming).
-Bit 0x08 is a coding/identity bit only (no extra equipment). So variant 9
-(0x0F) is fully equipped, and heating is present on variants 2, 4, 9 and 0x0B.
+| ADC window | flags | U centre [V] | equipment implied |
+|:----------:|:-----:|:------------:|:------------------|
+| 0x11–0x18 | 0x00 | ~0.41 | base buttons only |
+| 0x1D–0x25 | 0x02 | ~0.65 | + heating |
+| 0x2A–0x33 | 0x01 | ~0.92 | + optional buttons |
+| 0x39–0x43 | 0x03 | ~1.22 | optional buttons + heating |
+| 0x6A–0x76 | 0x08 | ~2.20 | base (reserved bit only) |
+| 0x7C–0x89 | 0x09 | ~2.57 | optional buttons (+reserved) |
+| 0x8E–0x9D | 0x0F | ~2.94 | optional buttons + heating + scroll |
+| 0xA3–0xB1 | 0x0C | ~3.33 | scroll (+reserved) |
+| 0xB7–0xC8 | 0x0B | ~3.76 | optional buttons + heating (+reserved) |
+| outside all | — | — | `g_testMode` = 1 (coding fault, gated subsystems off) |
 
-(If the divider is the other way round — coding resistor to +5 V and the
-pull-down fixed — invert: `R = Rpd·(1−k)/k`.)
+### Equipment summary
 
-### Answers
+* Base buttons, the resistor ladder and LIN are **always present** (not gated).
+* **Optional buttons** (positions 4,5,8,9) = bit 0x01; **heating** = bit 0x02;
+  **scroll wheel + illumination controller** = bit 0x04.  Bit 0x08 carries no
+  equipment (never tested).
+* **Fullest set** = flags 0x0F (0x8E–0x9D window): optional buttons + heating
+  + scroll.  **Heating** is present in any window with bit 0x02 set (0x1D,
+  0x39, 0x8E, 0xB7).
+* The scroll encoder's **motion** is decoded continuously on its own channels
+  in `Scan_Isr` (1 ms); the one-shot ch 0x0B read above is unrelated to motion.
 
-* **Highest-functionality variant: 9** (window 0x8E–0x9D, `flags = 0x0F`) —
-  all four bits set: buttons + heating + scroll/backlight + coding bit.
-* **Variants that support steering-wheel heating (bit 0x02): 2, 4, 9 and
-  0x0B.**  Of these, variant 9 is the full-featured one (heating *and*
-  scroll *and* all buttons).
+## Output stage / backlight drive (open)
+
+The `Output_*` stage (`Backlight_Start` → `Output_Stop`/`StallCheck`/`SelfTest`,
+gated by bit 0x04) toggles **PTE2 = pin 10 (TPM1CH0)** and reads ADC feedback
+(ch 0x0A supply, ch 0x02 ladder), raising a fault code on an implausible
+ratio.  **On this board PTE2 is a NO-CONNECT** (hardware inspection), so this
+stage drives no physical load and its self-test validates nothing real — it is
+effectively vestigial/generic code (consistent with a shared image, and with
+why the firmware first looked like a motor controller).  Consequently the
+firmware does **not** perform a button-LED health check.  How the real,
+dimmable button backlight is actually driven (a connected pin, or the car's
+dimming line in hardware) is **not resolved from the firmware** and is left as
+an open hardware question.
 
 ## Pinout
 
 The 44-pin LQFP package pin assignment and the ADC channel→pin usage are in
-[`reference/pinout.md`](reference/pinout.md) — the variant-coding ADC is on
-`PTD3` (AD1P11) = pin 32.
+[`reference/pinout.md`](reference/pinout.md).  The start-up coding ADC is on
+`PTD3` (AD1P11) = pin 32, wired (per board) to the TCUT1350X01 common emitter;
+`PTE2` = pin 10 is a no-connect.

@@ -192,7 +192,7 @@ void LinSig_PublishAll2(void)
  * 0x9000-0x9117) is:
  *   0x01C1: b0=0x02C4.0 b1=0x02C2.0 b2=0x02C1.0 b3=0x02BF.0
  *           b4=0x027F.hi b5=0x0280.hi b6=0x0281.hi b7=0x0282.msb
- *   0x01C2 (if FEAT_BIT0): b0=0x0283.0 b1=0x0284.0 ; (if FEAT_HEATER):
+ *   0x01C2 (if FEAT_OPT_BUTTONS): b0=0x0283.0 b1=0x0284.0 ; (if FEAT_HEATER):
  *           b3=0x02C3 b6=0x02C3.hi ; b7=0x02C0.msb
  *   0x01C3: b0..3 from 0x02D4 (if 0x02D1==0), b4..7 from 0x02D5
  *   0x01C4: 0xFF, or 0x46 when FEAT_HEATER set
@@ -231,7 +231,7 @@ void LinSig_BuildStatus(void)
     /* ---- data byte 0x01C2: feature-gated bits (asm 0x908B-0x90F3) ----- */
     {
         byte c = R8(0x01C2);
-        if (g_featureFlags & FEAT_BIT0) {
+        if (g_featureFlags & FEAT_OPT_BUTTONS) {
             c = (byte)((c & ~0x01) | ((R8(0x0283) & 0x01) ? 0x01 : 0));
             c = (byte)((c & ~0x02) | ((R8(0x0284) & 0x01) ? 0x02 : 0));
         } else {

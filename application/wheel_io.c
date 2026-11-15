@@ -9,13 +9,24 @@
  *                  commanded level, gated by the supply window)
  *   Scan_*       - the 1 ms button-ladder / scroll sampling + PWM tick
  *   Ladder_*     - analogue button-ladder reads and plausibility checks
- *   Output_*     - the physical output stage (enable / stop / self-test)
+ *   Output_*     - an output stage (enable / stop / self-test) that toggles
+ *                  PTE2 and reads ADC feedback (ch 0x0A / 0x02)
  *   Ramp_Limit   - the slew-rate limiter (backlight fade, supply filter)
  * The inner per-state arithmetic and the ladder compare table are intricate
  * fixed-point code cross-referenced to reference/application.asm.
  *
- * Active only on variants whose feature flags contain the scroll/backlight
- * bit (0x04); the application disables these tasks in g_testMode.
+ * Gated by the scroll/illumination feature bit (0x04); disabled in g_testMode.
+ *
+ * HARDWARE NOTE (board inspection): the "Output_*" stage drives PTE2 = pin 10
+ * (TPM1CH0), and on this board PTE2 is a NO-CONNECT.  Toggling it therefore
+ * has no physical effect here, and Output_SelfTest/Output_StallCheck validate
+ * no real load - this output stage is effectively vestigial/generic on this
+ * variant (it is probably a shared-image actuator driver, which is why the
+ * code first looked like a motor/H-bridge controller).  The names below are
+ * the decompiler's labels; "backlight" here is NOT proven to drive the button
+ * LEDs.  How the real, dimmable button backlight is actually driven is left as
+ * an open hardware question (likely a connected pin / the car dimming line),
+ * not resolved from the firmware alone.
  *
  * Key RAM:
  *   0x02B2  backlight output level / PWM duty request
@@ -28,11 +39,11 @@
 #define R8(a)  (*(volatile byte *)(a))
 #define FLASH8(a) (*(const volatile byte *)(a))
 
-extern void Output_Stop(void);   /* [0xA874] set up the H-bridge/PWM pins */
-extern byte Ladder_Reset(void);   /* [0xA88F] read end-stop / hall inputs   */
-extern byte Output_SelfTest(void);   /* [0xA8B6] self-test / stall check       */
-extern byte Output_StallCheck(void);   /* [0xA91B] self-test / stall check       */
-extern byte Ladder_ReadRef(void);   /* [0xA957] drive the output stage        */
+extern void Output_Stop(void);   /* [0xA874] clear PTE2 (pin 10, NC here) + state */
+extern byte Ladder_Reset(void);   /* [0xA88F] clear ladder status                */
+extern byte Output_SelfTest(void);   /* [0xA8B6] drive PTE2(NC) + read ADC feedback -> fault code */
+extern byte Output_StallCheck(void);   /* [0xA91B] ratiometric ch0x0A/ch0x02 check -> fault flag     */
+extern byte Ladder_ReadRef(void);   /* [0xA957] button-ladder reference read       */
 
 byte g_backlightLevel AT(0x02B2);       /* [0x02B2] requested output level */
 
@@ -167,7 +178,7 @@ static void Backlight_SetLevel(byte level, byte window, byte thresh)
         R8(0x0247) = R8(0x0244 + 1);            /* (saved arg) */
         R8(0x0246) = window;
         R8(0x0244) = 0;
-        R8(0x0008) |= 0x04;                     /* enable backlight pin */
+        R8(0x0008) |= 0x04;                     /* set PTE2 (pin 10, NO-CONNECT on this board) */
         R8(0x000A) &= (byte)~0x10;
         R8(0x023F) = 0;
         R8(0x029A) = 0;
@@ -520,7 +531,7 @@ void Scan_Task(void)
  * Device helper routines (previously referenced; now reconstructed).
  * ====================================================================== */
 
-/* Output_Stop [0xA874] - stop the H-bridge drive and clear the move. */
+/* Output_Stop [0xA874] - clear PTE2 (pin 10, NC here) + clear the active flag. */
 void Output_Stop(void)
 {
     R8(0x0245) = 0;                 /* clear "moving" flag        */

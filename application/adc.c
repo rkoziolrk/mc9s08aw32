@@ -1,30 +1,47 @@
 /*
- * DEVICE NOTE: 'variant detection' here is the STEERING-WHEEL CODING (which
- * button set is fitted); Adc_Read(ch 2) reads the BUTTON RESISTOR LADDER.
- * adc.c - ADC driver and hardware-variant detection
+ * adc.c - ADC driver + start-up option/presence coding
  *         (decompiled from 0xA103, 0xBEC2-0xBFA6 and 0xBFA7-0xC047).
  *
- * The board carries a "coding" input: a resistor divider on ADC channel
- * 0x0B whose voltage identifies which hardware variant the firmware is
- * running on.  Adc_DetectVariant() reads that channel once at start-up
- * and maps the 8-bit result into:
- *      g_variantCode  - the variant number (1,2,3,4,7,8,9,10,11,14)
- *      g_variantSub   - a sub-code (always 1 for the valid bands)
- *      g_featureFlags - the bitmask of enabled features (FEAT_*)
- * A reading that falls in none of the valid bands sets g_testMode = 1,
- * which disables the scroll/heating/button tasks (see main.c).
+ * DEVICE: Audi A4 B8 multifunction steering-wheel button panel.
+ *   Adc_Read channels actually sampled by the firmware:
+ *     ch 0x02  button RESISTOR LADDER (and output-stage feedback)
+ *     ch 0x03  heating NTC
+ *     ch 0x0A  supply / output feedback
+ *     ch 0x0B  start-up coding (read exactly once, in Adc_DetectVariant)
  *
- * Variant_ReadStraps() additionally samples five coding/strap inputs and
- * packs them into g_codingByte (used by the LIN identification signals).
+ * START-UP CODING (Adc_DetectVariant, 0xBEC7):
+ *   Reads channel 0x0B ONCE at boot and classifies the 8-bit value into
+ *   discrete windows.  The ONLY output consumed later is the bitmask
+ *   g_featureFlags (0x0299) - see the FEAT_* gates spread across the
+ *   firmware.  g_variantCode (0x02EC) and g_variantSub (0x02EB) are written
+ *   here but are NEVER READ anywhere in the image: dead/diagnostic
+ *   leftovers, NOT a consumed "variant number".  (There is therefore no
+ *   enumerated list of hardware variants - only the feature bits matter.)
+ *   A value outside every window sets g_testMode (0x02EA), which disables
+ *   the gated subsystems.
+ *
+ *   Channel 0x0B = AD11 = PTD3 = pin 32.  On this board (per hardware
+ *   inspection) that pin is wired, through series resistors, to the COMMON
+ *   EMITTER of the TCUT1350X01 transmissive optical sensor (the scroll-wheel
+ *   quadrature encoder).  So the "coding" is a one-shot read of the resting
+ *   DC level on that rail; the level (set by the series-resistor network /
+ *   which options are populated) selects the feature set.  It is best read
+ *   as option/presence coding at power-up, not a stored variant id.
+ *   The exact divider topology on that rail is board-level and NOT provable
+ *   from the firmware - treated here as the coding input only.
+ *
+ * Variant_ReadStraps() additionally samples digital strap pins (table at
+ * flash 0xC245) and packs them into g_codingByte (used by the LIN
+ * identification signals).  So coding = analog window (ch 0x0B) + straps.
  */
 #include "app.h"
 
-/* variant detection results */
-byte g_codingByte;      /* [0x0298] */
-byte g_featureFlags;    /* [0x0299] */
-byte g_variantCode;     /* [0x02EC] */
-byte g_variantSub;      /* [0x02EB] */
-byte g_testMode;        /* [0x02EA] */
+/* start-up coding results (see file header) */
+byte g_codingByte;      /* [0x0298] digital strap code (Variant_ReadStraps)   */
+byte g_featureFlags;    /* [0x0299] enabled-feature bitmask - ONLY consumed output */
+byte g_variantCode;     /* [0x02EC] WRITTEN BUT NEVER READ - dead/diagnostic  */
+byte g_variantSub;      /* [0x02EB] WRITTEN BUT NEVER READ - dead/diagnostic  */
+byte g_testMode;        /* [0x02EA] 1 = coding out of range -> gated off      */
 
 /* ======================================================================
  * Adc_Read  [0xA103]
@@ -50,7 +67,7 @@ byte Adc_Read(byte channel)
 
 /* ======================================================================
  * Adc_Init  [0xBEC2]
- * Detects the hardware variant, then runs the low-level output/ADC setup.
+ * Reads the start-up option coding (ADC window + straps), then continues.
  * ====================================================================== */
 void Adc_Init(void)
 {
@@ -60,8 +77,10 @@ void Adc_Init(void)
 
 /* ======================================================================
  * Adc_DetectVariant  [0xBEC7]
- * Reads the coding channel (0x0B) and classifies it.  The [lo,hi) bands
- * and their results are exactly those coded in the firmware.
+ * Reads the coding channel (0x0B) once and classifies it.  The [lo,hi)
+ * bands and their results are exactly those coded in the firmware.  Only
+ * g_featureFlags is used afterwards; g_variantCode/g_variantSub are set
+ * but never read (kept here to mirror the original code faithfully).
  * ====================================================================== */
 void Adc_DetectVariant(void)
 {
@@ -88,7 +107,7 @@ void Adc_DetectVariant(void)
     } else if (v >= 0x6A && v < 0x77) {  /* band 5 */
         g_variantCode  = 7;
         g_variantSub   = 1;
-        g_featureFlags = 0x08;
+        g_featureFlags = 0x08;           /* only FEAT_RESERVED - no subsystem enabled */
     } else if (v >= 0x7C && v < 0x8A) {  /* band 6 */
         g_variantCode  = 8;
         g_variantSub   = 1;
@@ -96,15 +115,15 @@ void Adc_DetectVariant(void)
     } else if (v >= 0x8E && v < 0x9E) {  /* band 7 */
         g_variantCode  = 9;
         g_variantSub   = 1;
-        g_featureFlags = 0x0F;           /* all four feature bits */
+        g_featureFlags = 0x0F;           /* opt-buttons + heater + scroll (+ reserved 0x08) */
     } else if (v >= 0xA3 && v < 0xB2) {  /* band 8 */
         g_variantCode  = 0x0A;
         g_variantSub   = 1;
-        g_featureFlags = 0x0C;           /* scroll + bit3 */
+        g_featureFlags = 0x0C;           /* scroll (+ reserved 0x08) */
     } else if (v >= 0xB7 && v < 0xC9) {  /* band 9 */
         g_variantCode  = 0x0B;
         g_variantSub   = 1;
-        g_featureFlags = 0x0B;           /* bit0 + heater + bit3 */
+        g_featureFlags = 0x0B;           /* opt-buttons + heater (+ reserved 0x08) */
     } else {                             /* out of range -> test mode */
         g_variantCode  = 0x0E;
         g_testMode     = 1;

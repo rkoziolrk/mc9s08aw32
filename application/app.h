@@ -23,12 +23,18 @@
 #endif
 
 /* ---------------------------------------------------------------------- */
-/* Feature flags (g_featureFlags, set from the coding ADC, see adc.c)      */
+/* Feature flags (g_featureFlags, latched once from the coding ADC at      */
+/* start-up - see adc.c).  This bitmask is the ONLY consumed output of the */
+/* coding read; each bit was confirmed from every gate in the firmware.    */
 /* ---------------------------------------------------------------------- */
-#define FEAT_BIT0        0x01
-#define FEAT_HEATER      0x02     /* checked in the 10-tick task          */
-#define FEAT_SCROLL       0x04     /* checked in init and the 10-tick task */
-#define FEAT_BIT3        0x08
+#define FEAT_OPT_BUTTONS 0x01     /* optional button positions 4,5,8,9 in Buttons_Scan + their LIN signals */
+#define FEAT_HEATER      0x02     /* steering-wheel heating: Heating_Task (NTC ch3) + output + LIN status   */
+#define FEAT_SCROLL      0x04     /* scroll/roll wheel + illumination controller: gates Scan_Init +          */
+                                  /* Backlight_Start at boot and their 10-tick tasks                        */
+#define FEAT_RESERVED    0x08     /* set in some coding windows but NEVER tested by any code path            */
+/* back-compat aliases (old generic names) */
+#define FEAT_BIT0        FEAT_OPT_BUTTONS
+#define FEAT_BIT3        FEAT_RESERVED
 
 /* LIN application flag byte g_linAppFlags [0x02AE] */
 #define LINAPP_SLEEP_REQ 0x01     /* go-to-sleep requested                */
@@ -73,12 +79,12 @@ extern byte    g_diagState;           /* [0x02A2] */
 extern word    g_nvmCounterA, g_nvmCounterB;
 extern byte   *g_nvmPage;
 
-/* adc.c - variant detection results */
-extern byte g_codingByte;      /* [0x0298] strap-coded byte                */
-extern byte g_featureFlags;    /* [0x0299] enabled features (FEAT_*)       */
-extern byte g_variantCode;     /* [0x02EC] hardware variant number         */
-extern byte g_variantSub;      /* [0x02EB] variant sub-code                */
-extern byte g_testMode;        /* [0x02EA] 1 = invalid/test coding         */
+/* adc.c - start-up coding results (see adc.c header) */
+extern byte g_codingByte;      /* [0x0298] digital strap code (Variant_ReadStraps)       */
+extern byte g_featureFlags;    /* [0x0299] enabled-feature bitmask - ONLY consumed output (FEAT_*) */
+extern byte g_variantCode;     /* [0x02EC] WRITTEN BUT NEVER READ - dead/diagnostic      */
+extern byte g_variantSub;      /* [0x02EB] WRITTEN BUT NEVER READ - dead/diagnostic      */
+extern byte g_testMode;        /* [0x02EA] 1 = coding out of range -> gated subsystems off */
 extern byte g_cfgDefaults;     /* [0x029D] 1 = no valid stored config      */
 
 /* lin.c - LIN protocol state (zero page) */

@@ -163,8 +163,8 @@ labels used throughout the C sources and the annotated `.asm` listings.
 | 0xA719 | `Scan_Isr` | Button-ladder / scroll sampling + backlight PWM (1 ms) |
 | 0xA874 | `Output_Stop` | (see disassembly) |
 | 0xA88F | `Ladder_Reset` | (see disassembly) |
-| 0xA8B6 | `Output_SelfTest` | (see disassembly) |
-| 0xA91B | `Output_StallCheck` | (see disassembly) |
+| 0xA8B6 | `Output_SelfTest` | Drive PTE2 (pin 10, NO-CONNECT here) + read ADC ch 0x0A/0x02 → fault code (no real load) |
+| 0xA91B | `Output_StallCheck` | Ratiometric ch 0x0A/ch 0x02 feedback check → fault flag (PTE2 NC; vestigial) |
 | 0xA957 | `Ladder_ReadRef` | (see disassembly) |
 | 0xA99E | `BacklightOut_Init` | Init the backlight output stage |
 | 0xA9A9 | `BacklightOut_Task` | Backlight output periodic task |
@@ -200,8 +200,8 @@ labels used throughout the C sources and the annotated `.asm` listings.
 | 0xBC54 | `ResetLog_Init` | Init the digital/PWM outputs |
 | 0xBCB1 | `SelfTest_Task` | Update the outputs |
 | 0xBEB7 | `Adc_sub_BEB7` | (see disassembly) |
-| 0xBEC2 | `Adc_Init` | Init ADC then detect the hardware variant |
-| 0xBEC7 | `Adc_DetectVariant` | Read the coding ADC channel and map it to variant+feature flags |
+| 0xBEC2 | `Adc_Init` | Init ADC then read the start-up option coding |
+| 0xBEC7 | `Adc_DetectVariant` | Read coding ADC ch 0x0B once (TCUT emitter rail) → `g_featureFlags`; `g_variantCode`/`g_variantSub` are written but never read |
 | 0xBFA7 | `Variant_ReadStraps` | Read the 5 coding/strap inputs into the coding byte |
 | 0xC048 | `rotate3` | (see disassembly) |
 | 0xC06C | `muls8` | (see disassembly) |

@@ -10,7 +10,7 @@ resistor ladder), decodes the scroll/roll wheel, drives the button
 backlighting (PWM) and, on the equipped variants, the steering-wheel
 heating. It talks over LIN to the steering-column module and carries an
 in-system **LIN bootloader** for field reprogramming. See `DEVICE.md` for
-the functional map, the feature-coding resistor and the variant table.
+the functional map and the start-up option coding.
 
 > **Status.** The whole image (~18 KB, ~230 routines) has been reconstructed
 > as commented C — the application **and** the bootloader (including the
@@ -26,7 +26,7 @@ the functional map, the feature-coding resistor and the variant table.
 ```
 .
 ├── README.md                 this file
-├── DEVICE.md                 what the device is + per-module function map + variant table
+├── DEVICE.md                 what the device is + per-module function map + option coding
 ├── PROGRESS.md               per-routine reconstruction status / how to resume
 ├── Makefile                  `make check` = host syntax check of the C
 ├── firmware/
@@ -77,10 +77,12 @@ the functional map, the feature-coding resistor and the variant table.
 * **`main()`** runs `App_InitAll()` then loops: wait for the 1 ms tick flag
   (set by the TPM2-CH0 compare ISR), run the cooperative `Scheduler_Run()`,
   which fans out into 2/5/10/25-tick tasks.
-* **Steering-wheel variant** is read once at init from a coding resistor on
-  ADC channel `0x0B` (`Adc_DetectVariant`), which sets `g_featureFlags`
-  (buttons / heating / scroll+backlight enables) and, out of range,
-  `g_testMode`. See `DEVICE.md` for the variant/resistor table.
+* **Option coding** is read once at init from ADC channel `0x0B`
+  (`Adc_DetectVariant`; that pin is the TCUT1350X01 common-emitter rail on
+  this board), setting the `g_featureFlags` bitmask (optional buttons /
+  heating / scroll enables) and, out of range, `g_testMode`.  There is no
+  stored "variant number" (`g_variantCode`/`g_variantSub` are written but
+  never read). See `DEVICE.md` for the coding windows and feature bits.
 * **Buttons** are an analogue resistor ladder (ADC ch 2) plus GPIO inputs,
   debounced with a 4-sample shift register (`buttons.c`); the scroll wheel
   and the backlight PWM dimming are handled in `wheel_io.c`.

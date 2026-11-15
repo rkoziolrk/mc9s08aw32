@@ -9,7 +9,7 @@ package).
 
 | Function | `Adc_Read()` ch | Signal / port pin | 44-LQFP pin |
 |----------|-----------------|-------------------|:-----------:|
-| **Steering-wheel variant coding** | AD11 (0x0B) | `AD1P11` / `PTD3` | **32** |
+| **Start-up option coding** (TCUT1350X01 common emitter) | AD11 (0x0B) | `AD1P11` / `PTD3` | **32** |
 | Supply-voltage monitor / current | AD10 (0x0A) | `AD1P10` / `PTD2` | **31** |
 | Heating NTC sensor | AD3 (0x03) | `AD1P3` / `PTB3` | **26** |
 | Button resistor ladder / feedback | AD2 (0x02) | `AD1P2` / `PTB2` | **25** |
@@ -17,7 +17,16 @@ package).
 | ADC supply | — | `VDDAD` / `VSSAD` | 29 / 30 |
 
 Note: `PTD3` (and `PTD2`, `PTD7`, `PTG4`) carry both a pull-up and a
-pull-down device — suited to the coding-resistor divider input.
+pull-down device.  On this board (hardware inspection) **PTD3 / pin 32 is
+wired, through series resistors, to the common emitter of the TCUT1350X01**
+transmissive optical sensor (the scroll-wheel encoder).  `Adc_DetectVariant`
+reads this rail **once** at start-up as the option/presence code — it is not a
+plain coding-resistor divider, so no resistor value is inferred here.
+
+Note: **`PTE2` / pin 10 (TPM1CH0) is a NO-CONNECT** on this board.  The
+`Output_*` self-test/stall stage toggles it and reads ADC feedback, but drives
+no physical load here (vestigial/generic actuator code); it is not a
+button-LED health check.
 
 ## Full 44-LQFP pin list
 

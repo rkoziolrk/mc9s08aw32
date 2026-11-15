@@ -60,10 +60,10 @@ void Buttons_Scan(void)
     }
 
     for (i = 3; i < 10; i++) {
-        if (g_featureFlags & FEAT_BIT0) {
-            Button_Action(i);            /* all inputs active */
+        if (g_featureFlags & FEAT_OPT_BUTTONS) {
+            Button_Action(i);            /* all inputs active (optional positions fitted) */
         } else {
-            /* without FEAT_BIT0 only inputs 4,5,8,9 dispatch an action */
+            /* without FEAT_OPT_BUTTONS only inputs 4,5,8,9 dispatch an action */
             if (i == 4 || i == 5 || i == 8 || i == 9) {
                 /* these skip the action (cbeqa -> branch past) */
             } else {
