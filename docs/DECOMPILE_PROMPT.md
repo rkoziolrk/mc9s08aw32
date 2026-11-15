@@ -6,7 +6,7 @@ and the HCS08/CodeWarrior/Capstone pitfalls learned on this project so the
 next decompilation does not re-derive them.
 
 > Tip: if the new image is the same ecosystem (HCS08 / Audi LIN slave), add
-> a line *"use `rkoziolrk/s909aw32` as a template"* — see the variant at the
+> a line *"use `rkoziolrk/mc9s08aw32` as a template"* — see the variant at the
 > bottom — so the agent clones this repo and reuses the register header,
 > structure and conventions.
 
@@ -101,7 +101,7 @@ pytaj tylko gdy tożsamość/wariant realnie zmienia interpretację.
 If the new firmware is the same ecosystem, append this to the prompt:
 
 ````
-Użyj repo `rkoziolrk/s909aw32` jako szablonu: sklonuj je, przejmij nagłówek
+Użyj repo `rkoziolrk/mc9s08aw32` jako szablonu: sklonuj je, przejmij nagłówek
 rejestrów (common/mc9s08aw32.h), strukturę katalogów, Makefile `make check`,
 konwencje nazewnictwa i styl komentarzy. Zrób nowe repo `<owner/repo>` o tej
 samej strukturze dla nowego wsadu.
