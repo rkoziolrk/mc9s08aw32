@@ -23,10 +23,11 @@
  * no real load - this output stage is effectively vestigial/generic on this
  * variant (it is probably a shared-image actuator driver, which is why the
  * code first looked like a motor/H-bridge controller).  The names below are
- * the decompiler's labels; "backlight" here is NOT proven to drive the button
- * LEDs.  How the real, dimmable button backlight is actually driven is left as
- * an open hardware question (likely a connected pin / the car dimming line),
- * not resolved from the firmware alone.
+ * the decompiler's labels; this "Output_*" stage does NOT drive the button
+ * LEDs.  The real dimmable illumination is a TPM1 PWM commanded over LIN on
+ * TPM1CH2 / PTF0 (pin 4), plus a fixed ~50% output on TPM1CH1 / PTE3 (pin 11)
+ * when strap PTC4 = VDD (g_outputVariant = 1).  See DEVICE.md "Illumination
+ * (backlight) control".
  *
  * Key RAM:
  *   0x02B2  backlight output level / PWM duty request

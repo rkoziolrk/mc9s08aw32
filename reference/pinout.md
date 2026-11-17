@@ -28,6 +28,22 @@ Note: **`PTE2` / pin 10 (TPM1CH0) is a NO-CONNECT** on this board.  The
 no physical load here (vestigial/generic actuator code); it is not a
 button-LED health check.
 
+### Illumination (backlight) PWM
+
+| Function | TPM1 channel | Port pin | 44-LQFP pin |
+|----------|--------------|----------|:-----------:|
+| **Backlight PWM (dimmed over LIN)** | TPM1CH2 | `PTF0` | **4** |
+| Second output, fixed ~50% (only when PTC4=VDD) | TPM1CH1 | `PTE3` | **11** |
+| Output-config strap → `g_outputVariant` | — | `PTC4` | **1** |
+
+The dimmable illumination is `TPM1CH2`/`PTF0` (pin 4): `TPM1MOD = 0xC8`, duty
+`TPM1C2V = 0xC8 − f(0x02B4)` where `0x02B4` is set from the cyclic LIN command
+(`LinApp_DecodeCommand` → `0x028F`).  No LIN traffic → duty `0xC8` → full
+brightness.  **`PTC4` / pin 1** is read at runtime (`brclr 4,PTCD`): at VDD it
+sets `g_outputVariant = 1`, which additionally enables the fixed ~50% output on
+`PTE3` / pin 11 (on the inspected board PTC4 = VDD).  See DEVICE.md
+"Illumination (backlight) control".
+
 ## Full 44-LQFP pin list
 
 | Pin | Signal(s) | Pin | Signal(s) |

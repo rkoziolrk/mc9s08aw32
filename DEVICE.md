@@ -124,19 +124,48 @@ network, not a plain coding divider, so any ohm figure would be guesswork.)
 * The scroll encoder's **motion** is decoded continuously on its own channels
   in `Scan_Isr` (1 ms); the one-shot ch 0x0B read above is unrelated to motion.
 
-## Output stage / backlight drive (open)
+## Illumination (backlight) control
 
-The `Output_*` stage (`Backlight_Start` → `Output_Stop`/`StallCheck`/`SelfTest`,
-gated by bit 0x04) toggles **PTE2 = pin 10 (TPM1CH0)** and reads ADC feedback
-(ch 0x0A supply, ch 0x02 ladder), raising a fault code on an implausible
-ratio.  **On this board PTE2 is a NO-CONNECT** (hardware inspection), so this
-stage drives no physical load and its self-test validates nothing real — it is
-effectively vestigial/generic code (consistent with a shared image, and with
-why the firmware first looked like a motor controller).  Consequently the
-firmware does **not** perform a button-LED health check.  How the real,
-dimmable button backlight is actually driven (a connected pin, or the car's
-dimming line in hardware) is **not resolved from the firmware** and is left as
-an open hardware question.
+The button backlight is **not** on PTE2 (pin 10 / TPM1CH0) — that pin is a
+NO-CONNECT and its `Output_*` self-test (see below) drives nothing.  The real,
+dimmable illumination is a **TPM1 PWM commanded over LIN**:
+
+```
+cyclic subscribed LIN frame
+  → LinApp_DecodeCommand (0x8E35): RX buffer 0x01C5..0x01C8 → signals 0x028E..0x0296
+  → backlight controller: 0x028F → duty params 0x02B3/0x02B4 (level 0x02B2)
+  → Isr_Kbi (0xB55B): TPM1C2V = 0xC8 − f(0x02B4)      (TPM1MOD = 0xC8)
+  → PWM out on TPM1CH2 = PTF0 = pin 4
+```
+
+* **Main dimmable output: `TPM1CH2` / `PTF0` / pin 4.** The enable path
+  (`sub_B5E4`) switches PTF0 from GPIO to PWM (`TPM1C2SC = 0x24`,
+  `TPM1C2V = 0xC8`); the off path (`Diag_sub_B620`/`sub_B639`) clears
+  `TPM1C2SC` and returns PTF0 to GPIO.  Brightness = `0xC8 − f(0x02B4)`, and
+  `0x02B4` comes from the decoded LIN byte `0x028F`.
+* **Default with no LIN traffic = full brightness.** With no frame, `0x028F`
+  stays 0 → `0x02B4 = 0` → `TPM1C2V = 0xC8` (and `Tpm1_Init` already sets
+  `TPM1C2V = 0xC8`).  So the panel lights at full until the bus commands a
+  dimmer level — matches the observed power-on behaviour.
+* **`LinErr_Set` fallback.** A framing error *during* communication forces
+  `0x02B2 = 0x50` (a defined mid level) — distinct from the no-traffic case.
+* **Strap `PTC4` (pin 1) → `g_outputVariant` (0x0275).** Read at runtime
+  (`brclr 4,PTCD`): **PTC4 = VDD → `g_outputVariant = 1`**, which *additionally*
+  enables a **second output `TPM1CH1` / `PTE3` / pin 11 at a fixed ~50% duty**
+  (`TPM1C1SC = 0x24`, `TPM1C1V = 0x64`).  With PTC4 low that channel stays off.
+  So PTC4 is not a pin selector — it adds the fixed-brightness PTE3 output
+  alongside the LIN-dimmed PTF0 one.  (On the inspected board PTC4 = VDD.)
+
+### Output self-test stage (`Output_*`) — vestigial here
+
+`Backlight_Start` (gated by feature bit 0x04) also runs `Output_Stop` /
+`Output_StallCheck` / `Output_SelfTest`, which toggle **PTE2 = pin 10
+(TPM1CH0)** and read ADC feedback (ch 0x0A supply, ch 0x02 ladder), raising a
+fault code on an implausible ratio.  **PTE2 is a NO-CONNECT on this board**, so
+this stage drives no physical load and validates nothing real — effectively
+vestigial/generic actuator code (consistent with a shared image, and with why
+the firmware first looked like a motor controller).  The firmware therefore
+performs **no** button-LED health check.
 
 ## Pinout
 
