@@ -35,7 +35,7 @@ slave** that:
 | `supply.c` `Supply_*` | **KL30 supply-voltage monitoring** |
 | `lin_signals.c` `LinApp_DecodeCommand` `CMD_LEVEL` (rx byte C7) | **backlight dimming level received** from the bus (instrument-cluster dimmer) |
 | `lin_signals.c` published signals | **button states + scroll counter** published to the column module |
-| `lin*.c` diagnostic transport | LIN **node configuration / diagnostics** (NAD, read-by-identity) |
+| `lin*.c` diagnostic transport | LIN diagnostic **ISO-TP transport** (NAD 0x0A) — transport + accept/reject only, no per-service dispatcher (see `reference/lin_frames.md`) |
 | `selftest.c` `ResetLog_Init` / `SelfTest_Task` | **reset-cause logging** + background flash CRC self-test |
 | `buttons.c` `Buttons_Scan` / `Button_Debounce` | **steering-wheel button scan** (GPIO inputs, 4-sample shift-register debounce) |
 
@@ -47,6 +47,12 @@ slave** that:
 * **Subscribe (master → this node):** backlight **dimming level** and
   enable, decoded by `LinApp_DecodeCommand` (bytes 0x01C5..0x01C8) into the
   backlight / state variables.
+
+The complete frame list (IDs/PIDs, directions, byte layouts, the diagnostic
+ISO-TP response and node NAD `0x0A`) is in
+[`reference/lin_frames.md`](reference/lin_frames.md).  Note: the diagnostic
+channel implements the transport + accept/reject only — there is **no**
+per-service (read-by-identifier / assign-NAD) dispatcher in the image.
 
 Everything else in `README.md` (memory map, bootloader, build, coverage)
 still applies; this file only corrects *what the firmware is for*.
