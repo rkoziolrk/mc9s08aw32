@@ -61,6 +61,10 @@ so bits for controls a given wheel lacks simply stay 0.
 The four lower bits + the roller clicks were confirmed on real hardware with a
 PICkit LIN monitor on a base wheel (no heating, no paddles, no extra buttons);
 the four upper bits never asserted there because those controls are absent.
+Note: that base wheel's **"i"/NAV button is also present and recognised** — it
+is **not** a B2 bit but **B3 bit 0x80** (see the B3 table below), so the full
+recognised control set of the base wheel is: MODE, voice, left/right roller
+(click + rotation) and "i"/NAV.
 
 **B3 = `0x01C2` — mixed button / status (feature-gated).**
 
