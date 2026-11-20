@@ -41,6 +41,52 @@ Built by `LinSig_BuildStatus` (0x8F6C) into `0x01BF..0x01C4`:
 LIN protocol errors are **folded into this frame** (see section D), i.e. this
 is where "response_error"-style status is reported.
 
+#### Status-frame signal semantics (exact, from `BuildStatus` 0x900D-0x9117)
+
+**B2 = `0x01C1` — button bitmap (all 8 bits assembled unconditionally).**
+A source byte is set only when its physical control exists and is actuated,
+so bits for controls a given wheel lacks simply stay 0.
+
+| bit | source | meaning | present on base wheel |
+|:---:|:------:|---------|:---------------------:|
+| 0x01 | 0x02C4 | **MODE** | yes |
+| 0x02 | 0x02C2 | **left roller — click** | yes |
+| 0x04 | 0x02C1 | **voice (ROZP. MOWY)** | yes |
+| 0x08 | 0x02BF | **right roller — click** | yes |
+| 0x10 | 0x027F | extra button | only on wheels fitted with it |
+| 0x20 | 0x0280 | extra button | only on wheels fitted with it |
+| 0x40 | 0x0281 | extra button | only on wheels fitted with it |
+| 0x80 | 0x0282 | extra button | only on wheels fitted with it |
+
+The four lower bits + the roller clicks were confirmed on real hardware with a
+PICkit LIN monitor on a base wheel (no heating, no paddles, no extra buttons);
+the four upper bits never asserted there because those controls are absent.
+
+**B3 = `0x01C2` — mixed button / status (feature-gated).**
+
+| bit | source | meaning | condition |
+|:---:|:------:|---------|-----------|
+| 0x01 | 0x0283 | optional button | only if `FEAT_OPT_BUTTONS` (0x01) |
+| 0x02 | 0x0284 | optional button | only if `FEAT_OPT_BUTTONS` (0x01) |
+| 0x08 | 0x02C3.0 | **heating status (NOT a button)** | only if `FEAT_HEATER` (0x02) |
+| 0x40 | 0x02C3.4 | **heating status (NOT a button)** | only if `FEAT_HEATER` (0x02) |
+| 0x80 | 0x02C0.msb | button ("i"/NAV) | always |
+| 0x04, 0x10, 0x20 | — | **never written → static** | baseline |
+
+Because bits 2/4/5 are never touched, B3 idles at **`0x34`** (= 0x04+0x10+0x20);
+the firmware even masks B3 with `and #$34` in the idle/reset state (0x8FF4).
+So a decoder may treat `B3 ^ 0x34` as the live bits — valid as long as the
+wheel has **no heating**, otherwise bits 0x08/0x40 carry heating status and a
+naive XOR would report them as phantom button events.
+
+**B4 = `0x01C3` — roller rotation (signed nibbles).**
+Low nibble ← `0x02D4` (only when `0x02D1==0`) = left roller steps;
+high nibble ← `0x02D5` = right roller steps. (Roller *rotation*; the roller
+*click* is the B2 bit above.)
+
+**B5 = `0x01C4`** = `0x46` when `FEAT_HEATER` is set, else `0xFF` — a ready-made
+"is this a heated wheel" indicator (useful to auto-select the B3 decode).
+
 ### A2. Identification — ID `0x21` (PID `0x61`), 2 bytes
 `0x01BD..0x01BE`, set by `LinSig_InitTx` (0x8F18):
 
